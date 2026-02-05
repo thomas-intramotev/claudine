@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run compile:*)",
+      "Bash(npm run build:*)",
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(python3:*)",
+      "Bash(test:*)",
+      "Bash(npm run build:webview:*)",
+      "Bash(npm run:*)",
+      "Bash(npx svelte-check:*)",
+      "Bash(npx tsc:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}
