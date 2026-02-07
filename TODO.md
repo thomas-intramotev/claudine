@@ -370,5 +370,7 @@ The webview is the primary UI surface, and it lacks fundamental accessibility su
 | 13 | Add CONTRIBUTING.md, SECURITY.md, issue templates | Pending |
 | 14 | Add incremental JSONL parsing | Pending |
 | 15 | Add diagnostic command | Pending |
+| 16 | Allow to resize the column widths individually | Pending |
+| 17 | Allow to zoom in and out in the kanban board | Pending |
 
 **Paused:** screenshot, virtual scrolling
