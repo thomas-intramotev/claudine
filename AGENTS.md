@@ -14,6 +14,16 @@
 - Keep a .GIT_NEXT_COMMIT_MESSAGE.md file that contains a summary and diff of staged changes since the last commit and is used to prefill the commit message.
 - Use plain english when explaining (technical) concepts, and still refer to the professional computer science terminology in brackets.
 
+- Before attempting to delete a file to resolve a local type/lint failure, stop and ask the user. Other agents are often editing adjacent files; deleting their work to silence an error is never acceptable without explicit approval.
+- NEVER edit .env or any environment variable files—only the user may change them.
+- Coordinate with other agents before removing their in-progress edits—don't revert or delete work you didn't author unless everyone agrees.
+- Moving/renaming and restoring files is allowed.
+
+# ATOMIC COMMITS
+
+- Keep commits atomic: commit only the files you touched and list each path explicitly. For tracked files run `git commit -m "<scoped message>" -- path/to/file1 path/to/file2`. For brand-new files, use the one-liner `git restore --staged :/ && git add "path/to/file1" "path/to/file2" && git commit -m "<scoped message>" -- path/to/file1 path/to/file2`
+
+
 # SPECS
 
 - When a new specification is given, check for contradictions and highlight them to the prompting user.

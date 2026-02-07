@@ -24,7 +24,8 @@
       "Bash(npm test:*)",
       "Bash(npx vitest run:*)",
       "Bash(git status:*)",
-      "Bash(npx @vscode/vsce ls:*)"
+      "Bash(npx @vscode/vsce ls:*)",
+      "Bash(npx @vscode/vsce:*)"
     ]
   }
 }
