@@ -313,7 +313,7 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       await vscode.commands.executeCommand('workbench.view.scm');
       try {
         await vscode.commands.executeCommand('git.branchFrom', branch);
-      } catch {}
+      } catch { /* ignore if command unavailable */ }
     } catch {
       vscode.window.showInformationMessage(`Branch: ${branch}`);
     }

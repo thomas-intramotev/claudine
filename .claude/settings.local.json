@@ -23,7 +23,8 @@
       "Bash(node -e:*)",
       "Bash(npm test:*)",
       "Bash(npx vitest run:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(npx @vscode/vsce ls:*)"
     ]
   }
 }

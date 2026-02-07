@@ -472,7 +472,7 @@ export class ConversationParser {
       if (msg.gitBranch && msg.gitBranch !== 'HEAD') return msg.gitBranch;
     }
     for (const msg of messages) {
-      const match = msg.textContent.match(/(?:branch|checkout\s+-b)\s+([a-zA-Z0-9\-_\/]+)/i);
+      const match = msg.textContent.match(/(?:branch|checkout\s+-b)\s+([a-zA-Z0-9\-_/]+)/i);
       if (match) return match[1];
     }
     return undefined;

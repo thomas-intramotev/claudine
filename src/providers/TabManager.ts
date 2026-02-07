@@ -158,7 +158,7 @@ export class TabManager {
           try {
             await vscode.window.tabGroups.close(tab);
             console.log(`Claudine: Closed stale restored tab "${tab.label}"`);
-          } catch {}
+          } catch { /* ignore */ }
           return;
         }
       }
@@ -294,7 +294,7 @@ export class TabManager {
     try {
       await vscode.window.tabGroups.close(staleTab);
       console.log(`Claudine: Closed restored shell tab "${staleTab.label}"`);
-    } catch {}
+    } catch { /* ignore */ }
     this._onOpenConversation?.(conversationId);
     this._replacingStaleTab = false;
   }
