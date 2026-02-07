@@ -1,4 +1,5 @@
 import { ConversationCategory, ParsedMessage } from '../types';
+import { CATEGORY_CLASSIFICATION_MESSAGE_LIMIT } from '../constants';
 
 interface ClassificationRule {
   category: ConversationCategory;
@@ -117,7 +118,7 @@ export class CategoryClassifier {
     const parts = [title, description];
 
     // Add first few messages for context
-    for (const message of messages.slice(0, 5)) {
+    for (const message of messages.slice(0, CATEGORY_CLASSIFICATION_MESSAGE_LIMIT)) {
       if (message.textContent) {
         parts.push(message.textContent);
       }

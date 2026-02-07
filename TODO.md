@@ -314,7 +314,7 @@ The webview is the primary UI surface, and it lacks fundamental accessibility su
 ### P0 — Must fix before marketplace publish
 1. ~~Add `.vscodeignore`~~ DONE
 2. ~~Add PNG icon to `package.json`~~ DONE
-3. Add `resources/screenshot.png` (README has broken image) — NEEDS SCREENSHOT
+3. ~~Add `resources/screenshot.png` (README has broken image) — DONE~~
 4. ~~Add `LICENSE` file~~ DONE
 5. ~~Add `repository`, `license`, `keywords` to `package.json`~~ DONE
 6. ~~Move API key to `SecretStorage`~~ WAS ALREADY DONE
@@ -365,12 +365,14 @@ The webview is the primary UI surface, and it lacks fundamental accessibility su
 | 8 | Category/status filtering UI | Done |
 | 9 | Board export/import (PDF, XML, CSV, Trello/Jira compatible) | Done |
 | 10 | Extension API for other extensions | Done |
-| 11 | Decompose KanbanViewProvider.ts into smaller modules | Pending |
-| 12 | Extract magic numbers into named constants | Pending |
-| 13 | Add CONTRIBUTING.md, SECURITY.md, issue templates | Pending |
-| 14 | Add incremental JSONL parsing | Pending |
-| 15 | Add diagnostic command | Pending |
+| 11 | Decompose KanbanViewProvider.ts into smaller modules | Done |
+| 12 | Extract magic numbers into named constants | Done |
+| 13 | Add CONTRIBUTING.md, SECURITY.md, issue templates | Done |
+| 14 | Add incremental JSONL parsing | Done |
+| 15 | Add diagnostic command | Done |
 | 16 | Allow to resize the column widths individually | Pending |
 | 17 | Allow to zoom in and out in the kanban board | Pending |
+| 18 | Allow to zoom in and out in the kanban board | Pending |
+| 19 | Sidebar view: stack columns vertically (single-column layout) instead of horizontal when placed in sidebar | Pending |
 
-**Paused:** screenshot, virtual scrolling
+**Paused:** virtual scrolling

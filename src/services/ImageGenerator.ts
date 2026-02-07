@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { StorageService } from './StorageService';
+import { MAX_IMAGE_PROMPT_LENGTH } from '../constants';
 
 export class ImageGenerator {
   private _secrets: vscode.SecretStorage | undefined;
@@ -60,7 +61,7 @@ export class ImageGenerator {
 
   private createImagePrompt(title: string, description: string): string {
     // Create prompt for best possible thumbnail
-    const context = `${title}. ${description}`.slice(0, 1000);
+    const context = `${title}. ${description}`.slice(0, MAX_IMAGE_PROMPT_LENGTH);
 
     return `Imagine you have to do a poster thumbnail for a task in a task list that is described like: ${context}.
 

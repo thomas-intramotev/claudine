@@ -127,6 +127,11 @@
         "command": "claudine.importBoard",
         "title": "%command.importBoard%",
         "category": "Claudine"
+      },
+      {
+        "command": "claudine.showDiagnostics",
+        "title": "%command.showDiagnostics%",
+        "category": "Claudine"
       }
     ],
     "viewsContainers": {

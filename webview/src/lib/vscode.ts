@@ -87,6 +87,7 @@ export interface ClaudineSettings {
   claudeCodePath: string;
   enableSummarization: boolean;
   hasApiKey: boolean;
+  viewLocation: 'panel' | 'sidebar';
 }
 
 export type ExtensionMessage =

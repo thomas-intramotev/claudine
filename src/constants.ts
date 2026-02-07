@@ -1,0 +1,71 @@
+// ── Timing constants ─────────────────────────────────────────────────
+
+/** Delay for VS Code to re-evaluate `when` clauses after toggling panel ↔ sidebar. */
+export const VIEW_SWITCH_DELAY_MS = 300;
+
+/** Interval between automatic checks for stale done/cancelled conversations. */
+export const ARCHIVE_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Duration to suppress focus detection after explicitly opening a conversation. */
+export const FOCUS_SUPPRESS_DURATION_MS = 2000;
+
+/** Delay before focusing the Claude Code editor after opening a conversation. */
+export const EDITOR_FOCUS_DELAY_MS = 800;
+
+/** Delay before recording a tab ↔ conversation mapping (tab needs time to settle). */
+export const TAB_MAPPING_DELAY_MS = 500;
+
+/** Debounce delay for focus detection when switching tabs/editors. */
+export const FOCUS_DETECTION_DEBOUNCE_MS = 150;
+
+/** Time window within which a conversation is considered "recently active". */
+export const RECENTLY_ACTIVE_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+
+/** Timeout for Claude CLI summarization calls. */
+export const CLI_TIMEOUT_MS = 60_000; // 60 seconds
+
+/** Timeout for checking Claude CLI availability (`which`, `--version`). */
+export const CLI_CHECK_TIMEOUT_MS = 5000;
+
+// ── Size & length limits ─────────────────────────────────────────────
+
+/** Maximum image file size (in bytes) for reading as a data URI. */
+export const MAX_IMAGE_FILE_SIZE_BYTES = 512 * 1024; // 512 KB
+
+/** Maximum length for conversation titles before truncation. */
+export const MAX_TITLE_LENGTH = 80;
+
+/** Maximum length for conversation descriptions before truncation. */
+export const MAX_DESCRIPTION_LENGTH = 200;
+
+/** Maximum length for the "last message" preview before truncation. */
+export const MAX_LAST_MESSAGE_LENGTH = 120;
+
+/** Input cap for `stripMarkupTags` to prevent ReDoS on crafted JSONL data. */
+export const MAX_MARKUP_STRIP_LENGTH = 10_000;
+
+/** Maximum context string length sent to image generation APIs. */
+export const MAX_IMAGE_PROMPT_LENGTH = 1000;
+
+// ── Batch & limit constants ──────────────────────────────────────────
+
+/** Number of conversations per CLI summarization batch. */
+export const SUMMARIZATION_BATCH_SIZE = 10;
+
+/** Max title length included in summarization prompts. */
+export const SUMMARIZATION_TITLE_MAX_LENGTH = 100;
+
+/** Max description length included in summarization prompts. */
+export const SUMMARIZATION_DESC_MAX_LENGTH = 200;
+
+/** Max last-message length included in summarization prompts. */
+export const SUMMARIZATION_MESSAGE_MAX_LENGTH = 200;
+
+/** Maximum number of command results retained in command-results.json. */
+export const MAX_COMMAND_RESULTS_HISTORY = 50;
+
+/** Number of initial messages analysed for category classification. */
+export const CATEGORY_CLASSIFICATION_MESSAGE_LIMIT = 5;
+
+/** Number of random bytes used for webview CSP nonces. */
+export const NONCE_BYTES = 16;

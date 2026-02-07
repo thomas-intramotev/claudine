@@ -7,6 +7,7 @@ import { StateManager } from '../services/StateManager';
 import { SummaryService } from '../services/SummaryService';
 import { ImageGenerator } from '../services/ImageGenerator';
 import { Conversation } from '../types';
+import { MAX_IMAGE_FILE_SIZE_BYTES } from '../constants';
 
 export class ClaudeCodeWatcher {
   private _watcher: vscode.FileSystemWatcher | undefined;
@@ -35,6 +36,21 @@ export class ClaudeCodeWatcher {
       this._excludedWorkspacePath = context.extensionUri.fsPath;
       console.log(`Claudine: Development mode — excluding extension workspace: ${this._excludedWorkspacePath}`);
     }
+  }
+
+  /** Resolved path to the Claude Code data directory. */
+  public get claudePath(): string {
+    return this._claudePath;
+  }
+
+  /** Whether the file system watcher is active. */
+  public get isWatching(): boolean {
+    return this._watcher !== undefined;
+  }
+
+  /** Number of files held in the incremental parse cache. */
+  public get parseCacheSize(): number {
+    return this._parser.cacheSize;
   }
 
   private getClaudePath(): string {
@@ -135,6 +151,7 @@ export class ClaudeCodeWatcher {
   }
 
   private onFileDeleted(uri: vscode.Uri) {
+    this._parser.clearCache(uri.fsPath);
     const conversationId = path.basename(uri.fsPath, '.jsonl');
     if (conversationId) {
       this._stateManager.removeConversation(conversationId);
@@ -335,7 +352,7 @@ export class ClaudeCodeWatcher {
       if (!fs.existsSync(filePath)) return undefined;
 
       const stats = fs.statSync(filePath);
-      if (stats.size > 512 * 1024) return undefined; // skip files > 512KB
+      if (stats.size > MAX_IMAGE_FILE_SIZE_BYTES) return undefined;
 
       const buffer = fs.readFileSync(filePath);
       const ext = path.extname(filePath).toLowerCase().replace('.', '');

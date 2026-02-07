@@ -11,7 +11,8 @@ export const settings = writable<ClaudineSettings>({
   imageGenerationApi: 'none',
   claudeCodePath: '~/.claude',
   enableSummarization: false,
-  hasApiKey: false
+  hasApiKey: false,
+  viewLocation: 'panel'
 });
 
 // Error messages store

@@ -16,6 +16,7 @@
   "command.togglePlacement": "Toggle Panel / Sidebar Placement",
   "command.exportBoard": "Export Board...",
   "command.importBoard": "Import Board...",
+  "command.showDiagnostics": "Show Diagnostics",
   "config.imageGenerationApi.description": "API to use for generating task icons",
   "config.claudeCodePath.description": "Path to Claude Code data directory",
   "config.enableSummarization.description": "Use Claude Code CLI to generate short summaries for conversation cards",

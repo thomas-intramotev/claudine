@@ -10,6 +10,7 @@ import {
   ConversationCategory,
   Conversation
 } from '../types';
+import { MAX_COMMAND_RESULTS_HISTORY } from '../constants';
 
 const VALID_STATUSES: ConversationStatus[] = [
   'todo', 'needs-input', 'in-progress', 'in-review', 'done', 'cancelled', 'archived'
@@ -222,7 +223,7 @@ export class CommandProcessor {
         } catch { /* ignore parse errors */ }
       }
 
-      const all = [...existing, ...results].slice(-50);
+      const all = [...existing, ...results].slice(-MAX_COMMAND_RESULTS_HISTORY);
       fs.writeFileSync(this._resultsPath, JSON.stringify({ results: all }, null, 2));
     } catch (error) {
       console.error('Claudine: Error writing command results', error);

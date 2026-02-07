@@ -232,7 +232,7 @@
       </div>
     {/if}
     <SettingsPanel visible={settingsOpen} />
-    <KanbanBoard {showArchive} />
+    <KanbanBoard {showArchive} vertical={$settings.viewLocation === 'sidebar'} />
   </main>
 </div>
 

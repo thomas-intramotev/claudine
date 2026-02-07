@@ -9,6 +9,7 @@ import { ImageGenerator } from './services/ImageGenerator';
 import { CommandProcessor } from './services/CommandProcessor';
 import { promptExport, promptImport } from './services/BoardExporter';
 import { ConversationStatus } from './types';
+import { VIEW_SWITCH_DELAY_MS } from './constants';
 
 let kanbanProvider: KanbanViewProvider;
 let claudeCodeWatcher: ClaudeCodeWatcher;
@@ -292,7 +293,7 @@ export async function activate(context: vscode.ExtensionContext) {
       setTimeout(() => {
         const viewId = next === 'sidebar' ? 'claudine.kanbanViewSidebar' : 'claudine.kanbanView';
         vscode.commands.executeCommand(`${viewId}.focus`);
-      }, 300);
+      }, VIEW_SWITCH_DELAY_MS);
       vscode.window.showInformationMessage(
         vscode.l10n.t('Claudine moved to {0}.', next === 'sidebar' ? vscode.l10n.t('sidebar') : vscode.l10n.t('panel'))
       );
@@ -344,6 +345,53 @@ export async function activate(context: vscode.ExtensionContext) {
       const doc = await vscode.workspace.openTextDocument(targetPath);
       await vscode.window.showTextDocument(doc);
       vscode.window.showInformationMessage(vscode.l10n.t('Created CLAUDINE.AGENTS.md — reference it from your CLAUDE.md to enable agent board control.'));
+    })
+  );
+
+  // Show Diagnostics — display extension health info in an output channel
+  const diagnosticChannel = vscode.window.createOutputChannel('Claudine Diagnostics');
+  context.subscriptions.push(diagnosticChannel);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudine.showDiagnostics', async () => {
+      const config = vscode.workspace.getConfiguration('claudine');
+      const conversations = stateManager.getConversations();
+      const statusCounts: Record<string, number> = {};
+      for (const c of conversations) {
+        statusCounts[c.status] = (statusCounts[c.status] || 0) + 1;
+      }
+      const apiKey = await context.secrets.get('imageGenerationApiKey');
+
+      const lines: string[] = [
+        `Claudine Diagnostics — ${new Date().toISOString()}`,
+        '='.repeat(50),
+        '',
+        '## Extension',
+        `  Version: ${context.extension.packageJSON.version}`,
+        `  Extension Path: ${context.extensionPath}`,
+        `  VS Code: ${vscode.version}`,
+        '',
+        '## Configuration',
+        `  Claude Code Path: ${claudeCodeWatcher.claudePath}`,
+        `  View Location: ${config.get('viewLocation', 'panel')}`,
+        `  Image Generation API: ${config.get('imageGenerationApi', 'none')}`,
+        `  API Key Configured: ${apiKey ? 'Yes' : 'No'}`,
+        `  Summarization: ${config.get('enableSummarization', false) ? 'Enabled' : 'Disabled'}`,
+        '',
+        '## Watcher',
+        `  File Watcher Active: ${claudeCodeWatcher.isWatching}`,
+        `  Parse Cache Entries: ${claudeCodeWatcher.parseCacheSize}`,
+        '',
+        '## Board State',
+        `  Total Conversations: ${conversations.length}`,
+        ...Object.entries(statusCounts).map(([status, count]) => `    ${status}: ${count}`),
+        '',
+        '## Workspace',
+        ...(vscode.workspace.workspaceFolders?.map(f => `  ${f.uri.fsPath}`) ?? ['  (no workspace)']),
+      ];
+
+      diagnosticChannel.clear();
+      diagnosticChannel.appendLine(lines.join('\n'));
+      diagnosticChannel.show();
     })
   );
 

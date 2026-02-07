@@ -79,6 +79,7 @@ export interface ClaudineSettings {
   claudeCodePath: string;
   enableSummarization: boolean;
   hasApiKey: boolean;
+  viewLocation: 'panel' | 'sidebar';
 }
 
 // Claude Code data structures (based on actual file format)

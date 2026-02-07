@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { StateManager } from '../services/StateManager';
+import { FOCUS_DETECTION_DEBOUNCE_MS } from '../constants';
 
 /**
  * Manages the bidirectional mapping between Claude Code editor tabs and
@@ -212,7 +213,7 @@ export class TabManager {
     if (Date.now() < this._suppressFocusUntil) return;
     this._focusDetectionTimer = setTimeout(() => {
       this.detectFocusedConversation();
-    }, 150);
+    }, FOCUS_DETECTION_DEBOUNCE_MS);
   }
 
   /**

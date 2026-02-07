@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import { ConversationParser } from '../providers/ConversationParser';
+import { MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH } from '../constants';
 import * as fixtures from './fixtures/sample-conversations';
 
 // Mock fs module
@@ -68,14 +69,14 @@ describe('ConversationParser', () => {
       expect(result!.title).toBe('Fix the login bug in auth.ts');
     });
 
-    it('truncates long titles to 80 characters', async () => {
+    it(`truncates long titles to ${MAX_TITLE_LENGTH} characters`, async () => {
       const longText = 'A'.repeat(100);
       const content = [
         fixtures.userMessage(longText, 10),
         fixtures.assistantMessage('OK', 9),
       ].join('\n');
       const result = await parseContent(content);
-      expect(result!.title.length).toBeLessThanOrEqual(80);
+      expect(result!.title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH);
       expect(result!.title).toMatch(/\.\.\.$/);
     });
 
@@ -102,13 +103,13 @@ describe('ConversationParser', () => {
       expect(result!.description).toContain('fixed the login bug');
     });
 
-    it('truncates long descriptions to 200 characters', async () => {
+    it(`truncates long descriptions to ${MAX_DESCRIPTION_LENGTH} characters`, async () => {
       const content = [
         fixtures.userMessage('Do something', 10),
         fixtures.assistantMessage('B'.repeat(300), 9),
       ].join('\n');
       const result = await parseContent(content);
-      expect(result!.description.length).toBeLessThanOrEqual(200);
+      expect(result!.description.length).toBeLessThanOrEqual(MAX_DESCRIPTION_LENGTH);
     });
   });
 

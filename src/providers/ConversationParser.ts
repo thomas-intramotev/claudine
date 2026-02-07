@@ -9,69 +9,149 @@ import {
   ClaudeCodeJsonlEntry,
   ClaudeCodeContent
 } from '../types';
+import {
+  MAX_TITLE_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_LAST_MESSAGE_LENGTH,
+  MAX_MARKUP_STRIP_LENGTH,
+  RECENTLY_ACTIVE_WINDOW_MS
+} from '../constants';
+
+/** Cached intermediate state for incremental parsing. */
+interface ParseCache {
+  byteOffset: number;
+  messages: ParsedMessage[];
+  firstTimestamp: string | undefined;
+  lastTimestamp: string | undefined;
+  gitBranch: string | undefined;
+}
 
 export class ConversationParser {
   private _classifier: CategoryClassifier;
+  private _cache = new Map<string, ParseCache>();
 
   constructor() {
     this._classifier = new CategoryClassifier();
+  }
+
+  /** Number of files currently held in the incremental parse cache. */
+  public get cacheSize(): number {
+    return this._cache.size;
+  }
+
+  /** Clear the parse cache for a specific file (e.g. on deletion). */
+  public clearCache(filePath: string) {
+    this._cache.delete(filePath);
   }
 
   public async parseFile(filePath: string): Promise<Conversation | null> {
     try {
       if (!filePath.endsWith('.jsonl')) return null;
 
-      const content = fs.readFileSync(filePath, 'utf-8');
-      if (!content.trim()) return null;
+      const cached = this._cache.get(filePath);
+      let fileSize: number;
+      try {
+        fileSize = fs.statSync(filePath).size;
+      } catch {
+        return null;
+      }
+      if (fileSize === 0) return null;
 
-      return this.parseJsonlFile(filePath, content);
+      // If the file shrank (e.g. was rewritten), invalidate the cache
+      if (cached && cached.byteOffset > fileSize) {
+        this._cache.delete(filePath);
+        return this.parseFile(filePath);
+      }
+
+      // Incremental: read only from where we left off
+      if (cached && cached.byteOffset === fileSize) {
+        // No new data — rebuild from cached messages
+        if (cached.messages.length === 0) return null;
+        return this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch);
+      }
+
+      if (cached && cached.byteOffset < fileSize) {
+        return this.parseIncremental(filePath, cached, fileSize);
+      }
+
+      // First read: full parse
+      return this.parseFullFile(filePath, fileSize);
     } catch (error) {
       console.error(`Claudine: Error parsing file ${filePath}:`, error);
       return null;
     }
   }
 
-  private parseJsonlFile(filePath: string, content: string): Conversation | null {
-    const lines = content.trim().split('\n').filter(line => line.trim());
-    if (lines.length === 0) return null;
+  private parseFullFile(filePath: string, fileSize: number): Conversation | null {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    if (!content.trim()) return null;
 
-    const messages: ParsedMessage[] = [];
-    let firstTimestamp: string | undefined;
-    let lastTimestamp: string | undefined;
-    let detectedGitBranch: string | undefined;
+    const cache: ParseCache = {
+      byteOffset: fileSize,
+      messages: [],
+      firstTimestamp: undefined,
+      lastTimestamp: undefined,
+      gitBranch: undefined,
+    };
+
+    this.parseLines(content, cache);
+    this._cache.set(filePath, cache);
+
+    if (cache.messages.length === 0) return null;
+    return this.buildConversation(filePath, cache.messages, cache.firstTimestamp, cache.lastTimestamp, cache.gitBranch);
+  }
+
+  private parseIncremental(filePath: string, cached: ParseCache, fileSize: number): Conversation | null {
+    // Read only the new bytes appended since last parse
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const newSize = fileSize - cached.byteOffset;
+      const buffer = Buffer.alloc(newSize);
+      fs.readSync(fd, buffer, 0, newSize, cached.byteOffset);
+      const newContent = buffer.toString('utf-8');
+
+      this.parseLines(newContent, cached);
+      cached.byteOffset = fileSize;
+    } finally {
+      fs.closeSync(fd);
+    }
+
+    if (cached.messages.length === 0) return null;
+    return this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch);
+  }
+
+  /** Parse raw JSONL lines and accumulate results into the cache. */
+  private parseLines(content: string, cache: ParseCache) {
+    const lines = content.split('\n');
 
     for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
       try {
-        const entry: ClaudeCodeJsonlEntry = JSON.parse(line);
+        const entry: ClaudeCodeJsonlEntry = JSON.parse(trimmed);
 
-        // Track timestamps
         if (entry.timestamp) {
-          if (!firstTimestamp) firstTimestamp = entry.timestamp;
-          lastTimestamp = entry.timestamp;
+          if (!cache.firstTimestamp) cache.firstTimestamp = entry.timestamp;
+          cache.lastTimestamp = entry.timestamp;
         }
 
-        // Track git branch from entry metadata
         if (entry.gitBranch && entry.gitBranch !== 'HEAD') {
-          detectedGitBranch = entry.gitBranch;
+          cache.gitBranch = entry.gitBranch;
         }
 
-        // Only process user and assistant messages that have a message body
         if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message) {
           continue;
         }
 
         const parsed = this.parseMessage(entry);
         if (parsed) {
-          messages.push(parsed);
+          cache.messages.push(parsed);
         }
       } catch {
         // Skip malformed lines
       }
     }
-
-    if (messages.length === 0) return null;
-
-    return this.buildConversation(filePath, messages, firstTimestamp, lastTimestamp, detectedGitBranch);
   }
 
   private parseMessage(entry: ClaudeCodeJsonlEntry): ParsedMessage | null {
@@ -195,13 +275,13 @@ export class ConversationParser {
     const content = this.stripMarkupTags(firstUser.textContent.trim());
     if (!content) return 'Untitled Conversation';
     const firstLine = content.split('\n')[0];
-    return firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine;
+    return firstLine.length > MAX_TITLE_LENGTH ? firstLine.slice(0, MAX_TITLE_LENGTH - 3) + '...' : firstLine;
   }
 
   /** Strip XML-like tags and their content (ide_opened_file, system-reminder, etc.) */
   private stripMarkupTags(text: string): string {
     // Limit input length to prevent ReDoS on crafted JSONL data
-    const capped = text.length > 10000 ? text.slice(0, 10000) : text;
+    const capped = text.length > MAX_MARKUP_STRIP_LENGTH ? text.slice(0, MAX_MARKUP_STRIP_LENGTH) : text;
     return capped.replace(/<[^>]+>[^<]*<\/[^>]+>/g, '').trim();
   }
 
@@ -211,7 +291,7 @@ export class ConversationParser {
 
     const content = firstAssistant.textContent.trim();
     const firstPara = content.split('\n\n')[0];
-    return firstPara.length > 200 ? firstPara.slice(0, 197) + '...' : firstPara;
+    return firstPara.length > MAX_DESCRIPTION_LENGTH ? firstPara.slice(0, MAX_DESCRIPTION_LENGTH - 3) + '...' : firstPara;
   }
 
   private extractLastMessage(messages: ParsedMessage[]): string {
@@ -222,7 +302,7 @@ export class ConversationParser {
     const content = lastAssistant.textContent.trim();
     const lines = content.split('\n').filter(l => l.trim());
     const lastLine = lines[lines.length - 1] || '';
-    return lastLine.length > 120 ? lastLine.slice(0, 117) + '...' : lastLine;
+    return lastLine.length > MAX_LAST_MESSAGE_LENGTH ? lastLine.slice(0, MAX_LAST_MESSAGE_LENGTH - 3) + '...' : lastLine;
   }
 
   private detectStatus(messages: ParsedMessage[]): ConversationStatus {
@@ -371,7 +451,7 @@ export class ConversationParser {
   private isRecentlyActive(messages: ParsedMessage[]): boolean {
     const last = messages[messages.length - 1];
     if (!last?.timestamp) return false;
-    return (Date.now() - new Date(last.timestamp).getTime()) < 2 * 60 * 1000;
+    return (Date.now() - new Date(last.timestamp).getTime()) < RECENTLY_ACTIVE_WINDOW_MS;
   }
 
   private extractErrorMessage(messages: ParsedMessage[]): string {

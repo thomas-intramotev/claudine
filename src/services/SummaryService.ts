@@ -2,6 +2,14 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import { spawn, execFile } from 'child_process';
 import { Conversation } from '../types';
+import {
+  SUMMARIZATION_BATCH_SIZE,
+  SUMMARIZATION_TITLE_MAX_LENGTH,
+  SUMMARIZATION_DESC_MAX_LENGTH,
+  SUMMARIZATION_MESSAGE_MAX_LENGTH,
+  CLI_TIMEOUT_MS,
+  CLI_CHECK_TIMEOUT_MS
+} from '../constants';
 
 interface CachedSummary {
   title: string;
@@ -80,8 +88,8 @@ export class SummaryService {
       return;
     }
 
-    for (let i = 0; i < conversations.length; i += 10) {
-      const batch = conversations.slice(i, i + 10);
+    for (let i = 0; i < conversations.length; i += SUMMARIZATION_BATCH_SIZE) {
+      const batch = conversations.slice(i, i + SUMMARIZATION_BATCH_SIZE);
       try {
         const summaries = await this.callClaude(batch);
         for (let j = 0; j < batch.length && j < summaries.length; j++) {
@@ -111,7 +119,7 @@ export class SummaryService {
   ): Promise<Array<{ title?: string; description?: string; lastMessage?: string }>> {
     return new Promise((resolve, reject) => {
       const entries = conversations.map((c, i) =>
-        `${i + 1}.\n  title: ${c.title.slice(0, 100)}\n  desc: ${c.description.slice(0, 200)}\n  latest: ${c.lastMessage.slice(0, 200)}`
+        `${i + 1}.\n  title: ${c.title.slice(0, SUMMARIZATION_TITLE_MAX_LENGTH)}\n  desc: ${c.description.slice(0, SUMMARIZATION_DESC_MAX_LENGTH)}\n  latest: ${c.lastMessage.slice(0, SUMMARIZATION_MESSAGE_MAX_LENGTH)}`
       ).join('\n\n');
 
       const prompt = `Summarize these coding conversations for compact Kanban board cards.
@@ -130,7 +138,7 @@ Return ONLY a JSON array in the same order: [{"title":"...","description":"...",
       const claudePath = this._claudePath!;
       const child = spawn(claudePath, ['-p'], {
         cwd: os.tmpdir(),
-        timeout: 60000,
+        timeout: CLI_TIMEOUT_MS,
         env: CHILD_ENV
       });
 
@@ -166,13 +174,13 @@ Return ONLY a JSON array in the same order: [{"title":"...","description":"...",
   private checkClaudeAvailable(): Promise<boolean> {
     return new Promise((resolve) => {
       // Resolve the absolute path to `claude` via `which` to avoid shell: true
-      execFile('which', ['claude'], { timeout: 5000, env: CHILD_ENV }, (err, stdout) => {
+      execFile('which', ['claude'], { timeout: CLI_CHECK_TIMEOUT_MS, env: CHILD_ENV }, (err, stdout) => {
         if (err || !stdout.trim()) {
           console.log('Claudine: Claude CLI not found in PATH, skipping summarization');
           return resolve(false);
         }
         this._claudePath = stdout.trim();
-        const child = spawn(this._claudePath, ['--version'], { timeout: 5000, env: CHILD_ENV });
+        const child = spawn(this._claudePath, ['--version'], { timeout: CLI_CHECK_TIMEOUT_MS, env: CHILD_ENV });
         child.on('error', () => {
           console.log('Claudine: Claude CLI not available, skipping summarization');
           resolve(false);

@@ -12,6 +12,7 @@
   import { vscode, type Conversation, type ConversationStatus } from '../lib/vscode';
 
   export let showArchive: boolean = false;
+  export let vertical: boolean = false;
 
   const flipDurationMs = 200;
 
@@ -133,7 +134,7 @@
     </div>
   </div>
 {:else}
-<div class="kanban-board">
+<div class="kanban-board" class:vertical>
   {#each $columns as column (column.id)}
     <div class="column-wrapper" class:narrow={narrowColumns[column.id]}>
       <KanbanColumn title={column.title} color={column.color} count={boardItems[column.id].filter(c => !c.isDraft).length} activeCount={boardItems[column.id].filter(c => c.agents.some(a => a.isActive)).length} narrow={narrowColumns[column.id] || false} onToggleNarrow={column.id === 'done' ? () => toggleColumnNarrow(column.id) : null}>
@@ -221,6 +222,11 @@
   .kanban-board { display: flex; gap: 12px; padding: 12px; overflow-x: auto; flex: 1; min-height: 0; align-items: stretch; }
   .column-wrapper { flex: 1; min-width: 260px; max-width: 350px; display: flex; flex-direction: column; transition: min-width 0.25s ease, max-width 0.25s ease; }
   .column-wrapper.narrow { flex: 0 0 auto; min-width: 60px; max-width: 60px; }
+
+  /* Vertical (sidebar) layout: stack columns top-to-bottom */
+  .kanban-board.vertical { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+  .kanban-board.vertical .column-wrapper { min-width: unset; max-width: unset; flex: none; }
+  .kanban-board.vertical .column-wrapper.narrow { min-width: unset; max-width: unset; }
   .drop-zone { min-height: 80px; padding: 6px; border-radius: 6px; }
   /* Empty-state via ::after so it is NOT a real DOM child (svelte-dnd-action
      treats every direct child element as an item — a stray child when the zone

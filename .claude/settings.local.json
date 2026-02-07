@@ -22,7 +22,8 @@
       "Bash(convert:*)",
       "Bash(node -e:*)",
       "Bash(npm test:*)",
-      "Bash(npx vitest run:*)"
+      "Bash(npx vitest run:*)",
+      "Bash(git status:*)"
     ]
   }
 }

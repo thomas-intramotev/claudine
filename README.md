@@ -62,7 +62,7 @@ Claudine is a Visual Studio Code extension that gives you a kanban-style overvie
 
 ### Command Palette
 
-- **17 commands** — Full command palette integration for all major actions (see [Commands](#commands))
+- **18 commands** — Full command palette integration for all major actions (see [Commands](#commands))
 - **Keyboard shortcuts** — Default keybindings for the most common operations
 
 ### Notifications & Status
@@ -81,10 +81,19 @@ Claudine is a Visual Studio Code extension that gives you a kanban-style overvie
 - **Export board** — Save your board as CSV, JSON, or Trello-compatible format
 - **Import board** — Restore conversations from a Claudine JSON export
 
+Import and export are available from the **Command Palette** (`Cmd+Shift+P` / `Ctrl+Shift+P`):
+
+- **Export Board...** — Choose a format (CSV, JSON, or Trello JSON), then pick a save location. The JSON format is re-importable; CSV and Trello are one-way exports.
+- **Import Board...** — Select a Claudine JSON file previously exported with the JSON option. Imported conversations are merged into the current board.
+
 ### Agent Integration
 
 - **Agent board control** — Claude Code agents can move tasks on the board automatically via `CLAUDINE.AGENTS.md`
 - **Extension API** — Other extensions can query conversations, move cards, and listen for status changes
+
+### Diagnostics
+
+- **Show Diagnostics** — View extension health info: watched paths, parse cache stats, conversation counts, API configuration
 
 ### Internationalization
 
@@ -123,6 +132,7 @@ After installation, Claudine appears as a panel tab (alongside Terminal, Problem
 | Icon | Action |
 |------|--------|
 | 🔍 | Toggle full-text search |
+| 🔽 | Filter by category (Bug, Feature, etc.) |
 | ☐/☰ | Toggle compact/expanded view |
 | ★ | Toggle AI summarization |
 | ⟳ | Refresh conversations |
@@ -205,6 +215,7 @@ Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type "Claudine":
 | Toggle Panel / Sidebar Placement | | Switch the board between panel and sidebar |
 | Export Board... | | Save the board as CSV, JSON, or Trello format |
 | Import Board... | | Load conversations from a Claudine JSON export |
+| Show Diagnostics | | Display extension health info (paths, watcher, counts) |
 | Open Settings | | Jump to Claudine settings in VS Code |
 
 Keybindings shown are macOS defaults. On Windows/Linux, replace `Cmd` with `Ctrl`.
@@ -348,28 +359,23 @@ The `ConversationParser` extracts:
 - **Git branch** — From entry metadata or message content
 - **Error state** — From API errors or tool failures in the latest exchange
 
+Parsing is incremental — on file changes, only newly appended bytes are read and parsed, with previous results cached in memory.
+
 The `StateManager` merges parsed data with saved state, preserving manual overrides (like marking a conversation as "Done") until new activity is detected.
 
 ## Roadmap
 
-- Decompose `KanbanViewProvider.ts` into smaller focused modules
-- Extract magic numbers into named constants
-- Add incremental JSONL parsing (currently re-parses entire files on change)
 - Add virtual scrolling for large boards (100+ conversations)
-- Add a diagnostic command (`Claudine: Show Diagnostics`) for troubleshooting
 - Add webview origin validation for message security
 - Add walkthrough (`contributes.walkthroughs`) for onboarding
-- Add `CONTRIBUTING.md`, `SECURITY.md`, and GitHub issue templates
+- Resizable column widths
+- Board zoom controls
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, project structure, coding guidelines, and the pull request process.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -am 'Add my feature'`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
+For security issues, please see [SECURITY.md](SECURITY.md) for responsible disclosure.
 
 ## License
 
