@@ -9,6 +9,13 @@ export interface Agent {
   isActive: boolean;
 }
 
+export type SidechainStepStatus = 'running' | 'completed' | 'failed' | 'idle';
+
+export interface SidechainStep {
+  status: SidechainStepStatus;
+  toolName?: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -24,7 +31,13 @@ export interface Conversation {
   errorMessage?: string;
   isInterrupted: boolean;
   hasQuestion: boolean;
+  isRateLimited: boolean;
+  /** Human-readable reset display, e.g. "10am (Europe/Zurich)". */
+  rateLimitResetDisplay?: string;
+  /** Absolute ISO datetime when the rate limit lifts. */
+  rateLimitResetTime?: string;
   icon?: string;
+  sidechainSteps?: SidechainStep[];
   referencedImage?: string;
   originalTitle?: string;
   originalDescription?: string;
@@ -51,6 +64,7 @@ export type ExtensionToWebviewMessage =
   | { type: 'updateSettings'; settings: ClaudineSettings }
   | { type: 'updateLocale'; strings: Record<string, string> }
   | { type: 'conversationUpdated'; conversation: Conversation }
+  | { type: 'removeConversations'; ids: string[] }
   | { type: 'focusedConversation'; conversationId: string | null }
   | { type: 'searchResults'; query: string; ids: string[] }
   | { type: 'draftsLoaded'; drafts: Array<{ id: string; title: string }> }
@@ -72,6 +86,7 @@ export type WebviewToExtensionMessage =
   | { type: 'closeEmptyClaudeTabs' }
   | { type: 'setupAgentIntegration' }
   | { type: 'testApiConnection' }
+  | { type: 'toggleAutoRestart' }
   | { type: 'ready' };
 
 export interface ClaudineSettings {
@@ -80,6 +95,7 @@ export interface ClaudineSettings {
   enableSummarization: boolean;
   hasApiKey: boolean;
   viewLocation: 'panel' | 'sidebar';
+  autoRestartAfterRateLimit: boolean;
 }
 
 // Claude Code data structures (based on actual file format)
@@ -138,6 +154,11 @@ export interface ParsedMessage {
   hasError: boolean;
   isInterrupted: boolean;
   hasQuestion: boolean;
+  isRateLimited: boolean;
+  /** Human-readable reset display, e.g. "10am (Europe/Zurich)". */
+  rateLimitResetDisplay?: string;
+  /** Absolute ISO datetime when the rate limit lifts. */
+  rateLimitResetTime?: string;
 }
 
 export interface ClaudeCodeSession {

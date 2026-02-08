@@ -1,20 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import { ConversationParser } from '../providers/ConversationParser';
 import { MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH } from '../constants';
 import * as fixtures from './fixtures/sample-conversations';
 
-// Mock fs module
-vi.mock('fs', () => ({
-  readFileSync: vi.fn(),
-  statSync: vi.fn(() => ({
-    birthtime: new Date('2025-01-01'),
-    mtime: new Date('2025-01-02'),
-  })),
-  existsSync: vi.fn(() => false),
+// Mock fs/promises module
+vi.mock('fs/promises', () => ({
+  stat: vi.fn().mockResolvedValue({ size: 1024 }),
+  readFile: vi.fn().mockResolvedValue(''),
+  access: vi.fn().mockRejectedValue(new Error('ENOENT')),
+  open: vi.fn(),
 }));
 
-const mockReadFileSync = vi.mocked(fs.readFileSync);
+const mockStat = vi.mocked(fsp.stat);
+const mockReadFile = vi.mocked(fsp.readFile);
 
 describe('ConversationParser', () => {
   let parser: ConversationParser;
@@ -22,10 +21,14 @@ describe('ConversationParser', () => {
   beforeEach(() => {
     parser = new ConversationParser();
     vi.clearAllMocks();
+    // Restore default mock behavior after clearAllMocks
+    vi.mocked(fsp.access).mockRejectedValue(new Error('ENOENT'));
   });
 
   function parseContent(content: string, filePath = '/home/user/.claude/projects/test-project/abc123.jsonl') {
-    mockReadFileSync.mockReturnValue(content);
+    const bytes = Buffer.byteLength(content, 'utf-8');
+    mockStat.mockResolvedValue({ size: bytes } as any);
+    mockReadFile.mockResolvedValue(content);
     return parser.parseFile(filePath);
   }
 
@@ -235,6 +238,127 @@ describe('ConversationParser', () => {
       expect(result!.createdAt).toBeInstanceOf(Date);
       expect(result!.updatedAt).toBeInstanceOf(Date);
       expect(result!.updatedAt.getTime()).toBeGreaterThanOrEqual(result!.createdAt.getTime());
+    });
+  });
+
+  // ── BUG regression tests ──────────────────────────────────────────
+
+  describe('BUG1 — sidechain filtering', () => {
+    it('returns null for conversations where all messages are sidechain', async () => {
+      const result = await parseContent(fixtures.sidechainOnlyConversation);
+      expect(result).toBeNull();
+    });
+
+    it('ignores sidechain messages when extracting title/description', async () => {
+      const result = await parseContent(fixtures.mixedSidechainConversation);
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('Implement the login page');
+      expect(result!.description).not.toContain('Sidechain noise');
+    });
+  });
+
+  describe('BUG3 — empty/meaningless conversations', () => {
+    it('returns null for conversations with only system-reminder content', async () => {
+      const result = await parseContent(fixtures.emptyMeaninglessConversation);
+      expect(result).toBeNull();
+    });
+
+    it('returns null for conversations with only assistant tool-use and no user text', async () => {
+      const result = await parseContent(fixtures.noUserTextConversation);
+      // No user text, no assistant text → empty conversation
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('rate limit detection', () => {
+    it('detects rate limit in assistant text', async () => {
+      const result = await parseContent(fixtures.rateLimitConversation);
+      expect(result).not.toBeNull();
+      expect(result!.isRateLimited).toBe(true);
+      expect(result!.rateLimitResetDisplay).toBe('10am (Europe/Zurich)');
+      expect(result!.rateLimitResetTime).toBeDefined();
+    });
+
+    it('detects rate limit in tool_result text', async () => {
+      const result = await parseContent(fixtures.rateLimitToolResultConversation);
+      expect(result).not.toBeNull();
+      expect(result!.isRateLimited).toBe(true);
+      expect(result!.rateLimitResetDisplay).toBe('2:30pm (America/New_York)');
+    });
+
+    it('does not flag resolved rate limits (new activity after limit)', async () => {
+      const result = await parseContent(fixtures.rateLimitResolvedConversation);
+      expect(result).not.toBeNull();
+      expect(result!.isRateLimited).toBe(false);
+    });
+
+    it('marks rate-limited conversations as needs-input', async () => {
+      const result = await parseContent(fixtures.rateLimitConversation);
+      expect(result!.status).toBe('needs-input');
+    });
+
+    it('clean conversations are not rate-limited', async () => {
+      const result = await parseContent(fixtures.completedConversation);
+      expect(result!.isRateLimited).toBe(false);
+      expect(result!.rateLimitResetDisplay).toBeUndefined();
+      expect(result!.rateLimitResetTime).toBeUndefined();
+    });
+  });
+
+  describe('parseResetTime', () => {
+    it('parses "10am" in a valid timezone', () => {
+      const result = ConversationParser.parseResetTime('10am', 'Europe/Zurich');
+      expect(result).toBeDefined();
+      // Should be a valid ISO string
+      expect(new Date(result!).toISOString()).toBe(result);
+    });
+
+    it('parses "2:30pm" format', () => {
+      const result = ConversationParser.parseResetTime('2:30pm', 'America/New_York');
+      expect(result).toBeDefined();
+      const d = new Date(result!);
+      // Should be in the future
+      expect(d.getTime()).toBeGreaterThan(Date.now() - 24 * 60 * 60 * 1000);
+    });
+
+    it('returns undefined for invalid time format', () => {
+      const result = ConversationParser.parseResetTime('invalid', 'UTC');
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined for invalid timezone', () => {
+      const result = ConversationParser.parseResetTime('10am', 'Not/A/Timezone');
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('sidechain activity dots', () => {
+    it('collects sidechain steps with correct statuses', async () => {
+      const result = await parseContent(fixtures.sidechainActivityConversation);
+      expect(result).not.toBeNull();
+      expect(result!.sidechainSteps).toBeDefined();
+      expect(result!.sidechainSteps).toHaveLength(3);
+      // running (assistant tool_use), completed (tool_result ok), failed (tool_result error)
+      expect(result!.sidechainSteps![0].status).toBe('running');
+      expect(result!.sidechainSteps![0].toolName).toBe('Bash');
+      expect(result!.sidechainSteps![1].status).toBe('completed');
+      expect(result!.sidechainSteps![2].status).toBe('failed');
+    });
+
+    it('keeps only the last 3 sidechain steps', async () => {
+      const result = await parseContent(fixtures.manySidechainStepsConversation);
+      expect(result).not.toBeNull();
+      expect(result!.sidechainSteps).toHaveLength(3);
+      // Last 3 of 5 entries: Tool2, Tool3, Tool4
+      expect(result!.sidechainSteps![0].toolName).toBe('Tool2');
+      expect(result!.sidechainSteps![1].toolName).toBe('Tool3');
+      expect(result!.sidechainSteps![2].toolName).toBe('Tool4');
+    });
+
+    it('returns undefined sidechainSteps when no sidechain entries', async () => {
+      const result = await parseContent(fixtures.completedConversation);
+      expect(result).not.toBeNull();
+      expect(result!.sidechainSteps).toBeUndefined();
     });
   });
 });

@@ -4,11 +4,12 @@
   import SettingsPanel from './components/SettingsPanel.svelte';
   import { vscode, type ExtensionMessage } from './lib/vscode';
   import {
-    settings, addError, setConversations, upsertConversation,
+    settings, addError, setConversations, upsertConversation, removeConversations,
     focusedConversationId, searchQuery, searchMode, compactView,
     extensionSearchMatchIds, loadDraftsFromExtension,
     expandAllCards, collapseAllCards,
-    activeCategories, toggleCategory, clearCategoryFilter, getCategoryDetails
+    activeCategories, toggleCategory, clearCategoryFilter, getCategoryDetails,
+    rateLimitInfo
   } from './stores/conversations';
   import type { ConversationCategory } from './lib/vscode';
   import { localeStrings, t } from './stores/locale';
@@ -58,6 +59,9 @@
         break;
       case 'conversationUpdated':
         upsertConversation(message.conversation);
+        break;
+      case 'removeConversations':
+        removeConversations(message.ids);
         break;
       case 'focusedConversation':
         focusedConversationId.set(message.conversationId);
@@ -126,6 +130,10 @@
     vscode.postMessage({ type: 'closeEmptyClaudeTabs' });
   }
 
+  function handleToggleAutoRestart() {
+    vscode.postMessage({ type: 'toggleAutoRestart' });
+  }
+
   let allExpanded = false;
 
   function toggleAllCards() {
@@ -191,6 +199,21 @@
   </aside>
 
   <main>
+    {#if $rateLimitInfo.active}
+      <div class="rate-limit-banner">
+        <span class="rl-icon">&#9203;</span>
+        <span class="rl-text">
+          You've hit your limit &middot; resets {$rateLimitInfo.resetDisplay}.
+        </span>
+        <button class="rl-auto-restart" class:active={$settings.autoRestartAfterRateLimit} on:click={handleToggleAutoRestart}>
+          {#if $settings.autoRestartAfterRateLimit}
+            Auto-restart enabled
+          {:else}
+            Automatically restart all paused tasks when limit is lifted
+          {/if}
+        </button>
+      </div>
+    {/if}
     {#if searchOpen}
       <div class="search-bar">
         <svg class="search-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>
@@ -425,6 +448,39 @@
   }
   .filter-clear:hover, .filter-close:hover { background: var(--vscode-toolbar-hoverBackground, #383838); }
   .filter-clear svg, .filter-close svg { width: 14px; height: 14px; }
+
+  /* ---- Rate limit banner ---- */
+  .rate-limit-banner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: rgba(245, 158, 11, 0.12);
+    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+    font-size: 11px;
+    color: var(--vscode-foreground, #cccccc);
+  }
+  .rl-icon { font-size: 13px; flex-shrink: 0; }
+  .rl-text { flex-shrink: 0; }
+  .rl-auto-restart {
+    font-size: 10px;
+    font-style: italic;
+    color: var(--vscode-textLink-foreground, #3794ff);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+  }
+  .rl-auto-restart:hover { text-decoration-style: solid; }
+  .rl-auto-restart.active {
+    color: #10b981;
+    font-style: normal;
+    font-weight: 500;
+    text-decoration: none;
+  }
 
   .about-overlay {
     position: fixed; inset: 0; z-index: 100;

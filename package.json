@@ -199,6 +199,11 @@
           ],
           "default": "panel",
           "description": "%config.viewLocation.description%"
+        },
+        "claudine.autoRestartAfterRateLimit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically restart paused tasks when the Claude API rate limit resets"
         }
       }
     },

@@ -122,6 +122,10 @@ export class ClaudeCodeWatcher {
     // Skip files from the extension's own workspace when in EDH
     if (this._excludedWorkspacePath && this.isFromExcludedWorkspace(uri.fsPath)) return;
 
+    // BUG2: Only process files that belong to the current workspace's project
+    // directory. The file watcher covers all projects, so we must filter here.
+    if (!this.isFromCurrentWorkspace(uri.fsPath)) return;
+
     try {
       const conversation = await this._parser.parseFile(uri.fsPath);
       if (conversation) {
@@ -166,6 +170,20 @@ export class ClaudeCodeWatcher {
     if (!this._excludedWorkspacePath) return false;
     const encodedExcluded = this.encodeWorkspacePath(this._excludedWorkspacePath);
     return filePath.includes(`${path.sep}${encodedExcluded}${path.sep}`);
+  }
+
+  /** BUG2: Check whether a JSONL file belongs to one of the current workspace's
+   *  project directories. When no workspace is open, allow all files (fallback). */
+  private isFromCurrentWorkspace(filePath: string): boolean {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) return true; // fallback: no workspace → allow all
+
+    for (const folder of workspaceFolders) {
+      if (this._excludedWorkspacePath && folder.uri.fsPath === this._excludedWorkspacePath) continue;
+      const encodedPath = this.encodeWorkspacePath(folder.uri.fsPath);
+      if (filePath.includes(`${path.sep}${encodedPath}${path.sep}`)) return true;
+    }
+    return false;
   }
 
   private async scanForConversations(): Promise<Conversation[]> {

@@ -1,25 +1,34 @@
 import * as vscode from 'vscode';
 import { StorageService } from './StorageService';
 import { Conversation, ConversationStatus } from '../types';
+import { SAVE_STATE_DEBOUNCE_MS, NOTIFY_COALESCE_MS } from '../constants';
 
 export class StateManager {
   private _conversations: Map<string, Conversation> = new Map();
   private _onConversationsChanged: vscode.EventEmitter<Conversation[]>;
   private _onNeedsInput: vscode.EventEmitter<Conversation>;
+  private _onRateLimitDetected: vscode.EventEmitter<Conversation>;
 
   public readonly onConversationsChanged: vscode.Event<Conversation[]>;
   /** Fires when a conversation transitions into 'needs-input' status. */
   public readonly onNeedsInput: vscode.Event<Conversation>;
+  /** Fires when a conversation becomes rate-limited (transition from not-limited to limited). */
+  public readonly onRateLimitDetected: vscode.Event<Conversation>;
 
   /** Resolves when saved state has been loaded from disk. Await before scanning. */
   public readonly ready: Promise<void>;
   private _readyResolve!: () => void;
+  private _saveTimer: ReturnType<typeof setTimeout> | undefined;
+  private _notifyTimer: ReturnType<typeof setTimeout> | undefined;
+  private _sortedCache: Conversation[] | null = null;
 
   constructor(private readonly _storageService: StorageService) {
     this._onConversationsChanged = new vscode.EventEmitter<Conversation[]>();
     this.onConversationsChanged = this._onConversationsChanged.event;
     this._onNeedsInput = new vscode.EventEmitter<Conversation>();
     this.onNeedsInput = this._onNeedsInput.event;
+    this._onRateLimitDetected = new vscode.EventEmitter<Conversation>();
+    this.onRateLimitDetected = this._onRateLimitDetected.event;
 
     this.ready = new Promise(resolve => { this._readyResolve = resolve; });
     this.loadState();
@@ -42,17 +51,36 @@ export class StateManager {
     }
   }
 
-  private async saveState() {
-    const conversations = this.getConversations();
-    await this._storageService.saveBoardState({
-      conversations,
-      lastUpdated: new Date()
-    });
+  private scheduleSave() {
+    clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => {
+      const conversations = this.getConversations();
+      this._storageService.saveBoardState({
+        conversations,
+        lastUpdated: new Date()
+      });
+    }, SAVE_STATE_DEBOUNCE_MS);
+  }
+
+  /** Flush any pending debounced save immediately (e.g. on dispose). */
+  public flushSave() {
+    if (this._saveTimer !== undefined) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = undefined;
+      const conversations = this.getConversations();
+      this._storageService.saveBoardState({
+        conversations,
+        lastUpdated: new Date()
+      });
+    }
   }
 
   public getConversations(): Conversation[] {
-    return Array.from(this._conversations.values())
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    if (!this._sortedCache) {
+      this._sortedCache = Array.from(this._conversations.values())
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    }
+    return this._sortedCache;
   }
 
   public getConversation(id: string): Conversation | undefined {
@@ -72,24 +100,36 @@ export class StateManager {
 
     // Merge with existing conversations, preserving manual overrides
     for (const conv of conversations) {
-      const prevStatus = this._conversations.get(conv.id)?.status;
+      const existing = this._conversations.get(conv.id);
+      const prevStatus = existing?.status;
+      const wasRateLimited = existing?.isRateLimited ?? false;
       this.mergeWithExisting(conv);
       this._conversations.set(conv.id, conv);
       if (conv.status === 'needs-input' && prevStatus && prevStatus !== 'needs-input') {
         this._onNeedsInput.fire(conv);
       }
+      if (conv.isRateLimited && !wasRateLimited) {
+        this._onRateLimitDetected.fire(conv);
+      }
     }
 
     this.archiveStaleConversations();
+    this.invalidateSort();
     this.notifyChange();
-    this.saveState();
+    this.scheduleSave();
   }
 
   public updateConversation(conversation: Conversation) {
+    const existing = this._conversations.get(conversation.id);
+    const wasRateLimited = existing?.isRateLimited ?? false;
     this.mergeWithExisting(conversation);
     this._conversations.set(conversation.id, conversation);
+    if (conversation.isRateLimited && !wasRateLimited) {
+      this._onRateLimitDetected.fire(conversation);
+    }
+    this.invalidateSort();
     this.notifyChange();
-    this.saveState();
+    this.scheduleSave();
   }
 
   /**
@@ -183,8 +223,9 @@ export class StateManager {
 
   public removeConversation(id: string) {
     this._conversations.delete(id);
+    this.invalidateSort();
     this.notifyChange();
-    this.saveState();
+    this.scheduleSave();
   }
 
   public moveConversation(id: string, newStatus: ConversationStatus) {
@@ -195,8 +236,9 @@ export class StateManager {
       conversation.status = newStatus;
       conversation.updatedAt = new Date();
       this._conversations.set(id, conversation);
+      this.invalidateSort();
       this.notifyChange();
-      this.saveState();
+      this.scheduleSave();
     }
   }
 
@@ -205,8 +247,9 @@ export class StateManager {
     if (conversation) {
       conversation.icon = icon;
       this._conversations.set(id, conversation);
+      this.invalidateSort();
       this.notifyChange();
-      this.saveState();
+      this.scheduleSave();
     }
   }
 
@@ -214,12 +257,18 @@ export class StateManager {
     for (const conv of this._conversations.values()) {
       conv.icon = undefined;
     }
+    this.invalidateSort();
     this.notifyChange();
-    await this.saveState();
+    this.scheduleSave();
   }
 
   public getConversationsByStatus(status: ConversationStatus): Conversation[] {
     return this.getConversations().filter(c => c.status === status);
+  }
+
+  /** Get all conversations currently paused due to a rate limit. */
+  public getRateLimitedConversations(): Conversation[] {
+    return this.getConversations().filter(c => c.isRateLimited);
   }
 
   public async saveDrafts(drafts: Array<{ id: string; title: string }>): Promise<void> {
@@ -242,8 +291,9 @@ export class StateManager {
       }
     }
     if (changed) {
+      this.invalidateSort();
       this.notifyChange();
-      this.saveState();
+      this.scheduleSave();
     }
   }
 
@@ -262,12 +312,20 @@ export class StateManager {
     }
 
     if (changed) {
+      this.invalidateSort();
       this.notifyChange();
-      this.saveState();
+      this.scheduleSave();
     }
   }
 
+  private invalidateSort() {
+    this._sortedCache = null;
+  }
+
   private notifyChange() {
-    this._onConversationsChanged.fire(this.getConversations());
+    clearTimeout(this._notifyTimer);
+    this._notifyTimer = setTimeout(() => {
+      this._onConversationsChanged.fire(this.getConversations());
+    }, NOTIFY_COALESCE_MS);
   }
 }

@@ -12,7 +12,8 @@ export const settings = writable<ClaudineSettings>({
   claudeCodePath: '~/.claude',
   enableSummarization: false,
   hasApiKey: false,
-  viewLocation: 'panel'
+  viewLocation: 'panel',
+  autoRestartAfterRateLimit: false
 });
 
 // Error messages store
@@ -74,6 +75,7 @@ function makeDraftConversation(id: string, title: string): Conversation {
     hasError: false,
     isInterrupted: false,
     hasQuestion: false,
+    isRateLimited: false,
     isDraft: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -110,6 +112,19 @@ export const firstConversationId = derived(conversations, ($conversations) => {
     }
   }
   return earliest.id;
+});
+
+/** Derived rate-limit banner state: active when any conversation is rate-limited. */
+export const rateLimitInfo = derived(conversations, ($conversations) => {
+  const limited = $conversations.filter(c => c.isRateLimited);
+  if (limited.length === 0) return { active: false, resetDisplay: '', conversationCount: 0 };
+  // Use the first rate-limited conversation's display info
+  const first = limited.find(c => c.rateLimitResetDisplay) || limited[0];
+  return {
+    active: true,
+    resetDisplay: first.rateLimitResetDisplay || 'soon',
+    conversationCount: limited.length
+  };
 });
 
 // IDs returned by extension-side JSONL full-text search
@@ -174,6 +189,17 @@ export function upsertConversation(conv: Conversation) {
     else { convs.push(conv); }
     all = convs;
     return convs;
+  });
+  conversationsByStatus.set(groupByStatus(all));
+}
+
+/** Remove conversations by ID and sync the board columns. */
+export function removeConversations(ids: string[]) {
+  const idSet = new Set(ids);
+  let all: Conversation[] = [];
+  conversations.update(convs => {
+    all = convs.filter(c => !idSet.has(c.id));
+    return all;
   });
   conversationsByStatus.set(groupByStatus(all));
 }

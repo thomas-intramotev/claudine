@@ -54,6 +54,20 @@ export class SummaryService {
     return id in this._cache;
   }
 
+  /** Remove cache entries for conversations that no longer exist. */
+  public pruneCache(activeIds: Set<string>): void {
+    let pruned = false;
+    for (const id of Object.keys(this._cache)) {
+      if (!activeIds.has(id)) {
+        delete this._cache[id];
+        pruned = true;
+      }
+    }
+    if (pruned) {
+      this.saveCache();
+    }
+  }
+
   /**
    * Summarize uncached conversations via the Claude Code CLI.
    * Fire-and-forget: calls onUpdate for each completed summary.
@@ -65,6 +79,9 @@ export class SummaryService {
     // Check setting
     const enabled = vscode.workspace.getConfiguration('claudine').get<boolean>('enableSummarization', false);
     if (!enabled) return;
+
+    // Prune stale entries on each scan cycle
+    this.pruneCache(new Set(conversations.map(c => c.id)));
 
     const uncached = conversations.filter(c => !this._cache[c.id] && !this._pending.has(c.id));
     if (uncached.length === 0) return;

@@ -453,6 +453,21 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Notify and schedule auto-restart when a rate limit is detected
+  context.subscriptions.push(
+    stateManager.onRateLimitDetected(conv => {
+      const resetDisplay = conv.rateLimitResetDisplay || 'soon';
+      vscode.window.showWarningMessage(
+        vscode.l10n.t('Rate limit hit — resets {0}', resetDisplay)
+      );
+      // Schedule auto-restart if the setting is enabled
+      const autoRestart = vscode.workspace.getConfiguration('claudine').get<boolean>('autoRestartAfterRateLimit', false);
+      if (autoRestart && conv.rateLimitResetTime) {
+        kanbanProvider.scheduleAutoRestart(conv.rateLimitResetTime);
+      }
+    })
+  );
+
   // Start watching for Claude Code changes
   claudeCodeWatcher.startWatching();
 
@@ -489,6 +504,12 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  if (kanbanProvider) {
+    kanbanProvider.dispose();
+  }
+  if (stateManager) {
+    stateManager.flushSave();
+  }
   if (claudeCodeWatcher) {
     claudeCodeWatcher.stopWatching();
   }

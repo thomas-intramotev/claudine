@@ -4,7 +4,8 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import PromptInput from './PromptInput.svelte';
 
-  import { afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
+  import { afterUpdate, createEventDispatcher } from 'svelte';
+  import { activityTick } from '../stores/activityTick';
 
   const dispatch = createEventDispatcher<{ sendDraft: string; deleteDraft: string; updateDraft: { id: string; title: string } }>();
 
@@ -37,12 +38,12 @@
   let descriptionExpanded = false;
   let latestExpanded = false;
 
-  // Activity timer — counts while agents are actively working, pauses when awaiting user input
+  // Activity timer — counts while agents are actively working, pauses when awaiting user input.
+  // Uses a single shared 1s tick (activityTick store) instead of per-card setInterval.
   $: isActive = conversation.agents.some(a => a.isActive)
     && !conversation.hasQuestion
     && !conversation.isInterrupted
     && conversation.status !== 'needs-input';
-  let timerInterval: ReturnType<typeof setInterval> | undefined;
   let elapsedSeconds = 0;
   let timerStartTime = 0;
   let frozenElapsed: number | undefined;
@@ -56,16 +57,15 @@
       timerStartTime = Date.now();
       frozenElapsed = undefined;
       elapsedSeconds = 0;
-      clearInterval(timerInterval);
-      timerInterval = setInterval(() => {
-        elapsedSeconds = Math.floor((Date.now() - timerStartTime) / 1000);
-      }, 1000);
     } else {
-      clearInterval(timerInterval);
-      timerInterval = undefined;
       frozenElapsed = elapsedSeconds;
     }
     wasActive = active;
+  }
+
+  // Recalculate elapsed time on each shared tick (only when active)
+  $: if (isActive && $activityTick >= 0) {
+    elapsedSeconds = Math.floor((Date.now() - timerStartTime) / 1000);
   }
 
   function formatElapsed(seconds: number): string {
@@ -78,10 +78,6 @@
 
   $: showTimer = isActive || frozenElapsed !== undefined;
   $: timerDisplay = isActive ? formatElapsed(elapsedSeconds) : (frozenElapsed !== undefined ? formatElapsed(frozenElapsed) : '');
-
-  onDestroy(() => {
-    clearInterval(timerInterval);
-  });
 
   afterUpdate(() => {
     if (focused && !prevFocused && cardEl) {
@@ -188,6 +184,8 @@
     {/if}
     {#if conversation.hasError}
       <span class="narrow-status-badge narrow-badge-error" title={conversation.errorMessage || 'Error'}>!</span>
+    {:else if conversation.isRateLimited}
+      <span class="narrow-status-badge narrow-badge-ratelimit" title="Rate limited">&#9208;</span>
     {:else if conversation.isInterrupted}
       <span class="narrow-status-badge narrow-badge-interrupted" title="Interrupted">ꝇ</span>
     {:else if conversation.hasQuestion}
@@ -198,6 +196,10 @@
     {/if}
     {#if conversation.agents.some(a => a.isActive)}
       <span class="narrow-dot narrow-dot-active"></span>
+    {/if}
+    {#if conversation.sidechainSteps?.length}
+      {@const lastStep = conversation.sidechainSteps[conversation.sidechainSteps.length - 1]}
+      <span class="narrow-dot narrow-dot-sc narrow-sc-{lastStep.status}" title={lastStep.toolName || 'Subagent'}></span>
     {/if}
   </div>
 
@@ -215,6 +217,8 @@
     </div>
     {#if conversation.hasError}
       <span class="error-badge-inline" title={conversation.errorMessage || 'Error'}>!</span>
+    {:else if conversation.isRateLimited}
+      <span class="ratelimit-badge-inline" title="Rate limited">&#9208;</span>
     {:else if conversation.isInterrupted}
       <span class="interrupted-badge-inline" title="Tool interrupted">ꝇ</span>
     {:else if conversation.hasQuestion}
@@ -237,6 +241,13 @@
       {/if}
     </div>
     <button class="compact-title-btn" on:click={handleOpenConversation} title={titleTooltip}>{@html highlight(cleanTitle(displayTitle))}</button>
+    {#if conversation.sidechainSteps?.length}
+      <div class="sidechain-dots compact" title="Subagent activity">
+        {#each conversation.sidechainSteps as step}
+          <span class="sc-dot sc-dot-{step.status}" title={step.toolName || step.status}></span>
+        {/each}
+      </div>
+    {/if}
     {#if conversation.agents.some(a => a.isActive)}
       <div class="compact-agents">
         {#each conversation.agents.filter(a => a.isActive) as agent (agent.id)}
@@ -265,6 +276,8 @@
   >
     {#if conversation.hasError}
       <div class="error-badge" title={conversation.errorMessage || 'Error occurred'}>!</div>
+    {:else if conversation.isRateLimited}
+      <div class="ratelimit-badge" title={conversation.rateLimitResetDisplay ? `Rate limited \u00b7 resets ${conversation.rateLimitResetDisplay}` : 'Rate limited'}>&#9208;</div>
     {:else if conversation.isInterrupted}
       <div class="interrupted-badge" title="Tool interrupted">ꝇ</div>
     {:else if conversation.hasQuestion}
@@ -341,6 +354,13 @@
           </svg>
           <span class="branch-name">{@html highlight(conversation.gitBranch || '')}</span>
         </button>
+      {/if}
+      {#if conversation.sidechainSteps?.length}
+        <div class="sidechain-dots" title="Subagent activity">
+          {#each conversation.sidechainSteps as step}
+            <span class="sc-dot sc-dot-{step.status}" title={step.toolName || step.status}></span>
+          {/each}
+        </div>
       {/if}
       {#if conversation.agents.some(a => a.isActive)}
         <div class="agents-row">
@@ -448,6 +468,12 @@
     background: #f59e0b; color: white; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: bold; z-index: 1;
+  }
+  .ratelimit-badge {
+    position: absolute; top: -6px; right: -6px; width: 18px; height: 18px;
+    background: #f59e0b; color: white; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; z-index: 1;
   }
   .task-card.has-question { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
 
@@ -586,6 +612,11 @@
     border-radius: 50%; font-size: 8px; font-weight: bold;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
+  .ratelimit-badge-inline {
+    width: 14px; height: 14px; background: #f59e0b; color: white;
+    border-radius: 50%; font-size: 7px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
 
   .eye-icon { flex-shrink: 0; font-size: 11px; line-height: 1; }
 
@@ -671,6 +702,7 @@
     color: white; z-index: 2;
   }
   .narrow-badge-error { background: #ef4444; }
+  .narrow-badge-ratelimit { background: #f59e0b; font-size: 6px; }
   .narrow-badge-interrupted { background: #6b7280; }
   .narrow-badge-question { background: #f59e0b; }
   .narrow-dot {
@@ -694,5 +726,23 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
   }
+
+  /* ---- Sidechain activity dots ---- */
+  .sidechain-dots { display: flex; align-items: center; gap: 3px; }
+  .sidechain-dots.compact { flex-shrink: 0; }
+  .sc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .sc-dot-idle      { background: #6b7280; }
+  .sc-dot-completed { background: #10b981; }
+  .sc-dot-failed    { background: #ef4444; }
+  .sc-dot-running   { background: #f59e0b; animation: count-pulse 2s ease-in-out infinite; }
+
+  /* Narrow view: single summary sidechain dot */
+  .narrow-dot-sc {
+    right: 6px;
+  }
+  .narrow-sc-idle      { background: #6b7280; }
+  .narrow-sc-completed { background: #10b981; }
+  .narrow-sc-failed    { background: #ef4444; }
+  .narrow-sc-running   { background: #f59e0b; animation: count-pulse 2s ease-in-out infinite; }
 
 </style>

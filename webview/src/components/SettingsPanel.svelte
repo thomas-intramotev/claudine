@@ -117,6 +117,15 @@
       </div>
     {/if}
 
+    <label class="toggle-field">
+      <input
+        type="checkbox"
+        checked={$settings.autoRestartAfterRateLimit}
+        on:change={(e) => updateSetting('autoRestartAfterRateLimit', e.currentTarget.checked)}
+      />
+      <span class="toggle-label">Auto-restart after rate limit</span>
+    </label>
+
     <button class="regen-btn" on:click={regenerateIcons}>Regenerate Thumbnails</button>
   </div>
 {/if}
@@ -214,6 +223,20 @@
     background: var(--vscode-testing-iconFailed, #ef4444);
     color: #fff;
     border-color: transparent;
+  }
+  .toggle-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .toggle-field input[type="checkbox"] {
+    accent-color: var(--vscode-focusBorder, #007acc);
+    cursor: pointer;
+  }
+  .toggle-label {
+    font-size: 10px;
+    color: var(--vscode-foreground, #cccccc);
   }
   .regen-btn {
     padding: 4px 10px;

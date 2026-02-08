@@ -11,6 +11,7 @@ function msg(text: string, role: 'user' | 'assistant' = 'user'): ParsedMessage {
     hasError: false,
     isInterrupted: false,
     hasQuestion: false,
+    isRateLimited: false,
   };
 }
 

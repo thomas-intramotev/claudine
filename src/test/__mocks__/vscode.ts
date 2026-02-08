@@ -47,3 +47,39 @@ export enum ConfigurationTarget {
 export const l10n = {
   t: (message: string, ..._args: unknown[]) => message,
 };
+
+// Tab system mocks for KanbanViewProvider / TabManager tests
+export class TabInputWebview {
+  constructor(public readonly viewType: string) {}
+}
+
+export const commands = {
+  executeCommand: async (..._args: unknown[]) => undefined,
+};
+
+export class Disposable {
+  constructor(private _callOnDispose: () => void) {}
+  dispose() { this._callOnDispose(); }
+}
+
+// Minimal FileSystemWatcher mock
+export function createFileSystemWatcher() {
+  return {
+    onDidCreate: () => ({ dispose: () => {} }),
+    onDidChange: () => ({ dispose: () => {} }),
+    onDidDelete: () => ({ dispose: () => {} }),
+    dispose: () => {},
+  };
+}
+
+// RelativePattern mock
+export class RelativePattern {
+  constructor(public base: string, public pattern: string) {}
+}
+
+// ExtensionMode enum
+export enum ExtensionMode {
+  Production = 1,
+  Development = 2,
+  Test = 3,
+}

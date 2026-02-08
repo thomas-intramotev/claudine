@@ -111,6 +111,7 @@ export function importFromJson(content: string): Conversation[] | null {
       agents: [],
       isInterrupted: false,
       hasQuestion: false,
+      isRateLimited: false,
       createdAt: new Date(c.createdAt),
       updatedAt: new Date(c.updatedAt),
     }));

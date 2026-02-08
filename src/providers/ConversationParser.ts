@@ -1,5 +1,5 @@
 import * as path from 'path';
-import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import { CategoryClassifier } from '../services/CategoryClassifier';
 import {
   Conversation,
@@ -7,20 +7,27 @@ import {
   Agent,
   ParsedMessage,
   ClaudeCodeJsonlEntry,
-  ClaudeCodeContent
+  ClaudeCodeContent,
+  SidechainStep
 } from '../types';
 import {
   MAX_TITLE_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_LAST_MESSAGE_LENGTH,
   MAX_MARKUP_STRIP_LENGTH,
-  RECENTLY_ACTIVE_WINDOW_MS
+  RECENTLY_ACTIVE_WINDOW_MS,
+  MAX_PARSE_CACHE_ENTRIES,
+  RATE_LIMIT_PATTERN
 } from '../constants';
+
+/** Maximum number of sidechain activity steps to retain (ring buffer). */
+const MAX_SIDECHAIN_STEPS = 3;
 
 /** Cached intermediate state for incremental parsing. */
 interface ParseCache {
   byteOffset: number;
   messages: ParsedMessage[];
+  sidechainSteps: SidechainStep[];
   firstTimestamp: string | undefined;
   lastTimestamp: string | undefined;
   gitBranch: string | undefined;
@@ -44,6 +51,19 @@ export class ConversationParser {
     this._cache.delete(filePath);
   }
 
+  /** Promote a key to most-recently-used and evict the oldest if over limit. */
+  private touchCache(key: string, value: ParseCache) {
+    this._cache.delete(key);
+    this._cache.set(key, value);
+    if (this._cache.size > MAX_PARSE_CACHE_ENTRIES) {
+      // Map iterates in insertion order — first key is the oldest
+      const oldest = this._cache.keys().next().value;
+      if (oldest !== undefined) {
+        this._cache.delete(oldest);
+      }
+    }
+  }
+
   public async parseFile(filePath: string): Promise<Conversation | null> {
     try {
       if (!filePath.endsWith('.jsonl')) return null;
@@ -51,7 +71,7 @@ export class ConversationParser {
       const cached = this._cache.get(filePath);
       let fileSize: number;
       try {
-        fileSize = fs.statSync(filePath).size;
+        fileSize = (await fsp.stat(filePath)).size;
       } catch {
         return null;
       }
@@ -65,59 +85,63 @@ export class ConversationParser {
 
       // Incremental: read only from where we left off
       if (cached && cached.byteOffset === fileSize) {
-        // No new data — rebuild from cached messages
+        // No new data — promote in LRU and rebuild from cached messages
+        this.touchCache(filePath, cached);
         if (cached.messages.length === 0) return null;
-        return this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch);
+        return await this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch, cached.sidechainSteps);
       }
 
       if (cached && cached.byteOffset < fileSize) {
-        return this.parseIncremental(filePath, cached, fileSize);
+        const result = await this.parseIncremental(filePath, cached, fileSize);
+        this.touchCache(filePath, cached);
+        return result;
       }
 
       // First read: full parse
-      return this.parseFullFile(filePath, fileSize);
+      return await this.parseFullFile(filePath, fileSize);
     } catch (error) {
       console.error(`Claudine: Error parsing file ${filePath}:`, error);
       return null;
     }
   }
 
-  private parseFullFile(filePath: string, fileSize: number): Conversation | null {
-    const content = fs.readFileSync(filePath, 'utf-8');
+  private async parseFullFile(filePath: string, fileSize: number): Promise<Conversation | null> {
+    const content = await fsp.readFile(filePath, 'utf-8');
     if (!content.trim()) return null;
 
     const cache: ParseCache = {
       byteOffset: fileSize,
       messages: [],
+      sidechainSteps: [],
       firstTimestamp: undefined,
       lastTimestamp: undefined,
       gitBranch: undefined,
     };
 
     this.parseLines(content, cache);
-    this._cache.set(filePath, cache);
+    this.touchCache(filePath, cache);
 
     if (cache.messages.length === 0) return null;
-    return this.buildConversation(filePath, cache.messages, cache.firstTimestamp, cache.lastTimestamp, cache.gitBranch);
+    return await this.buildConversation(filePath, cache.messages, cache.firstTimestamp, cache.lastTimestamp, cache.gitBranch, cache.sidechainSteps);
   }
 
-  private parseIncremental(filePath: string, cached: ParseCache, fileSize: number): Conversation | null {
+  private async parseIncremental(filePath: string, cached: ParseCache, fileSize: number): Promise<Conversation | null> {
     // Read only the new bytes appended since last parse
-    const fd = fs.openSync(filePath, 'r');
+    const handle = await fsp.open(filePath, 'r');
     try {
       const newSize = fileSize - cached.byteOffset;
       const buffer = Buffer.alloc(newSize);
-      fs.readSync(fd, buffer, 0, newSize, cached.byteOffset);
+      await handle.read(buffer, 0, newSize, cached.byteOffset);
       const newContent = buffer.toString('utf-8');
 
       this.parseLines(newContent, cached);
       cached.byteOffset = fileSize;
     } finally {
-      fs.closeSync(fd);
+      await handle.close();
     }
 
     if (cached.messages.length === 0) return null;
-    return this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch);
+    return await this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch, cached.sidechainSteps);
   }
 
   /** Parse raw JSONL lines and accumulate results into the cache. */
@@ -144,6 +168,13 @@ export class ConversationParser {
           continue;
         }
 
+        // BUG1: Skip sidechain entries from main message list — they are branched
+        // sub-conversations. But collect their status as activity dots.
+        if (entry.isSidechain) {
+          this.collectSidechainStep(entry, cache);
+          continue;
+        }
+
         const parsed = this.parseMessage(entry);
         if (parsed) {
           cache.messages.push(parsed);
@@ -151,6 +182,43 @@ export class ConversationParser {
       } catch {
         // Skip malformed lines
       }
+    }
+  }
+
+  /** Extract a sidechain activity step from a sidechain JSONL entry. */
+  private collectSidechainStep(entry: ClaudeCodeJsonlEntry, cache: ParseCache) {
+    if (!entry.message) return;
+
+    const content = entry.message.content || [];
+    const role = entry.message.role;
+
+    // Find the first tool_use or tool_result to determine status
+    const toolUse = content.find(b => b.type === 'tool_use' && b.name);
+    const toolResult = content.find(b => b.type === 'tool_result');
+    const toolName = toolUse?.name;
+
+    let step: SidechainStep;
+
+    if (role === 'assistant' && toolUse) {
+      // Assistant dispatching a tool → running
+      step = { status: 'running', toolName };
+    } else if (role === 'user' && toolResult) {
+      // Tool result returned — check for error
+      const isError = (toolResult as { is_error?: boolean }).is_error === true;
+      const resultText = typeof toolResult.content === 'string' ? toolResult.content : '';
+      const hasErrorPattern = isError || /error|exit code [1-9]/i.test(resultText);
+      step = { status: hasErrorPattern ? 'failed' : 'completed', toolName };
+    } else if (role === 'assistant' && content.some(b => b.type === 'text' && b.text)) {
+      // Assistant text response (no tool_use) → completed
+      step = { status: 'completed' };
+    } else {
+      return; // Not informative enough to show
+    }
+
+    cache.sidechainSteps.push(step);
+    // Keep only the last N steps
+    if (cache.sidechainSteps.length > MAX_SIDECHAIN_STEPS) {
+      cache.sidechainSteps.splice(0, cache.sidechainSteps.length - MAX_SIDECHAIN_STEPS);
     }
   }
 
@@ -167,14 +235,26 @@ export class ConversationParser {
     let hasError = false;
     let isInterrupted = false;
     let hasQuestion = false;
+    let isRateLimited = false;
+    let rateLimitResetDisplay: string | undefined;
+    let rateLimitResetTime: string | undefined;
 
     for (const block of contentBlocks) {
       if (block.type === 'text' && block.text) {
         textParts.push(block.text);
+        // Detect rate limit message in assistant text
+        const rlMatch = block.text.match(RATE_LIMIT_PATTERN);
+        if (rlMatch) {
+          isRateLimited = true;
+          const timeStr = rlMatch[1]; // e.g. "10am"
+          const tz = rlMatch[2];      // e.g. "Europe/Zurich"
+          rateLimitResetDisplay = `${timeStr} (${tz})`;
+          rateLimitResetTime = ConversationParser.parseResetTime(timeStr, tz);
+        }
       } else if (block.type === 'tool_use' && block.name) {
         toolUses.push({
           name: block.name,
-          input: block.input || {}
+          input: this.trimToolInput(block.name, block.input || {}),
         });
         // AskUserQuestion = interactive question (yes/no/multiple choice)
         if (block.name === 'AskUserQuestion' || block.name === 'ExitPlanMode') {
@@ -191,6 +271,15 @@ export class ConversationParser {
         }
         if (/API Error:\s*\d{3}/i.test(resultText)) {
           hasError = true;
+        }
+        // Also check tool results for rate limit messages
+        const rlMatch = resultText.match(RATE_LIMIT_PATTERN);
+        if (rlMatch) {
+          isRateLimited = true;
+          const timeStr = rlMatch[1];
+          const tz = rlMatch[2];
+          rateLimitResetDisplay = `${timeStr} (${tz})`;
+          rateLimitResetTime = ConversationParser.parseResetTime(timeStr, tz);
         }
       }
     }
@@ -210,38 +299,67 @@ export class ConversationParser {
       gitBranch: entry.gitBranch,
       hasError,
       isInterrupted,
-      hasQuestion
+      hasQuestion,
+      isRateLimited,
+      rateLimitResetDisplay,
+      rateLimitResetTime
     };
   }
 
-  private buildConversation(
+  /** Keep only the fields we actually use from tool inputs, discarding large payloads. */
+  private trimToolInput(toolName: string, input: Record<string, unknown>): Record<string, unknown> {
+    // Task tool: keep subagent_type + description for agent detection
+    if (toolName === 'Task') {
+      const trimmed: Record<string, unknown> = {};
+      if (input.subagent_type) trimmed.subagent_type = input.subagent_type;
+      if (input.description) trimmed.description = input.description;
+      return trimmed;
+    }
+    // Read tool: keep file_path for image detection
+    if (toolName === 'Read') {
+      const trimmed: Record<string, unknown> = {};
+      if (input.file_path) trimmed.file_path = input.file_path;
+      return trimmed;
+    }
+    // AskUserQuestion: keep question for display
+    if (toolName === 'AskUserQuestion') {
+      const trimmed: Record<string, unknown> = {};
+      if (input.question) trimmed.question = input.question;
+      return trimmed;
+    }
+    // All other tools: discard inputs entirely
+    return {};
+  }
+
+  private async buildConversation(
     filePath: string,
     messages: ParsedMessage[],
     firstTimestamp: string | undefined,
     lastTimestamp: string | undefined,
-    gitBranch: string | undefined
-  ): Conversation {
+    gitBranch: string | undefined,
+    sidechainSteps: SidechainStep[] = []
+  ): Promise<Conversation | null> {
     const id = this.extractSessionId(filePath);
     const title = this.extractTitle(messages);
     const description = this.extractDescription(messages);
     const lastMessage = this.extractLastMessage(messages);
+
+    // BUG3: Skip empty/meaningless conversations that have no real content.
+    if (title === 'Untitled Conversation' && !description && !lastMessage) {
+      return null;
+    }
+
     const status = this.detectStatus(messages);
     const category = this._classifier.classify(title, description, messages);
     const agents = this.detectAgents(messages);
     const hasError = this.hasRecentError(messages);
     const isInterrupted = this.hasRecentInterruption(messages);
     const hasQuestion = this.hasRecentQuestion(messages);
+    const isRateLimited = this.hasRecentRateLimit(messages);
+    const rateLimitInfo = isRateLimited ? this.extractRateLimitInfo(messages) : {};
 
-    let createdAt: Date;
-    let updatedAt: Date;
-    try {
-      const stats = fs.statSync(filePath);
-      createdAt = firstTimestamp ? new Date(firstTimestamp) : stats.birthtime;
-      updatedAt = lastTimestamp ? new Date(lastTimestamp) : stats.mtime;
-    } catch {
-      createdAt = firstTimestamp ? new Date(firstTimestamp) : new Date();
-      updatedAt = lastTimestamp ? new Date(lastTimestamp) : new Date();
-    }
+    const createdAt = firstTimestamp ? new Date(firstTimestamp) : new Date();
+    const updatedAt = lastTimestamp ? new Date(lastTimestamp) : new Date();
 
     return {
       id,
@@ -256,11 +374,15 @@ export class ConversationParser {
       errorMessage: hasError ? this.extractErrorMessage(messages) : undefined,
       isInterrupted,
       hasQuestion,
+      isRateLimited,
+      rateLimitResetDisplay: rateLimitInfo.display,
+      rateLimitResetTime: rateLimitInfo.time,
+      sidechainSteps: sidechainSteps.length > 0 ? sidechainSteps : undefined,
       referencedImage: this.extractReferencedImage(messages),
       createdAt,
       updatedAt,
       filePath,
-      workspacePath: this.extractWorkspacePath(filePath)
+      workspacePath: await this.extractWorkspacePath(filePath)
     };
   }
 
@@ -315,6 +437,11 @@ export class ConversationParser {
     const recentMessages = messages.slice(-3);
 
     if (recentMessages.some(m => m.hasError)) {
+      return 'needs-input';
+    }
+
+    // Rate-limited conversations are paused — mark as needs-input
+    if (recentMessages.some(m => m.isRateLimited)) {
       return 'needs-input';
     }
 
@@ -448,6 +575,102 @@ export class ConversationParser {
     return false;
   }
 
+  /** Check if any recent message carries a rate limit notice. */
+  private hasRecentRateLimit(messages: ParsedMessage[]): boolean {
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx === -1) return false;
+    return messages.slice(lastUserIdx).some(m => m.isRateLimited);
+  }
+
+  /** Extract rate limit reset info from the most recent rate-limited message. */
+  private extractRateLimitInfo(messages: ParsedMessage[]): { display?: string; time?: string } {
+    for (const msg of [...messages].reverse()) {
+      if (msg.isRateLimited) {
+        return { display: msg.rateLimitResetDisplay, time: msg.rateLimitResetTime };
+      }
+    }
+    return {};
+  }
+
+  /**
+   * Parse a human-readable reset time (e.g. "10am", "2:30pm") in a given timezone
+   * into the next occurrence as an ISO 8601 string.
+   */
+  public static parseResetTime(timeStr: string, timezone: string): string | undefined {
+    try {
+      // Parse the time components from strings like "10am", "2:30pm", "10 am"
+      const match = timeStr.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+      if (!match) return undefined;
+
+      let hours = parseInt(match[1], 10);
+      const minutes = match[2] ? parseInt(match[2], 10) : 0;
+      const meridiem = match[3].toLowerCase();
+
+      if (meridiem === 'pm' && hours < 12) hours += 12;
+      if (meridiem === 'am' && hours === 12) hours = 0;
+
+      // Get the current time in the target timezone
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      });
+      const parts = formatter.formatToParts(now);
+      const get = (type: string) => parts.find(p => p.type === type)?.value || '0';
+
+      const currentYear = parseInt(get('year'), 10);
+      const currentMonth = parseInt(get('month'), 10);
+      const currentDay = parseInt(get('day'), 10);
+      const currentHour = parseInt(get('hour'), 10);
+      const currentMinute = parseInt(get('minute'), 10);
+
+      // Build a date in the target timezone for today at the reset time.
+      // If that time has passed already, advance to tomorrow.
+      let resetDay = currentDay;
+      if (hours < currentHour || (hours === currentHour && minutes <= currentMinute)) {
+        resetDay += 1;
+      }
+
+      // Construct the date string in the target timezone and convert to UTC
+      // Use a temporary Date with the timezone offset to find the real UTC moment
+      const tzDate = new Date(
+        `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(resetDay).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`
+      );
+      // Re-interpret through the formatter to get the correct UTC offset
+      const utcFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+      // Find the UTC time that corresponds to the target local time
+      // by checking what local time `tzDate` maps to in the target timezone
+      const localParts = utcFormatter.formatToParts(tzDate);
+      const localHour = parseInt(localParts.find(p => p.type === 'hour')?.value || '0', 10);
+      const localMinute = parseInt(localParts.find(p => p.type === 'minute')?.value || '0', 10);
+      // Calculate the offset in minutes between what we want and what we got
+      const wantedMinutes = hours * 60 + minutes;
+      const gotMinutes = localHour * 60 + localMinute;
+      const offsetMs = (gotMinutes - wantedMinutes) * 60 * 1000;
+      const corrected = new Date(tzDate.getTime() - offsetMs);
+
+      // If the corrected time is in the past, add 24 hours
+      if (corrected.getTime() <= now.getTime()) {
+        corrected.setTime(corrected.getTime() + 24 * 60 * 60 * 1000);
+      }
+
+      return corrected.toISOString();
+    } catch {
+      return undefined;
+    }
+  }
+
   private isRecentlyActive(messages: ParsedMessage[]): boolean {
     const last = messages[messages.length - 1];
     if (!last?.timestamp) return false;
@@ -514,7 +737,7 @@ export class ConversationParser {
    * — dashes in the original path are indistinguishable from separator dashes.
    * Instead of guessing, check the actual filesystem for matching paths.
    */
-  private extractWorkspacePath(filePath: string): string | undefined {
+  private async extractWorkspacePath(filePath: string): Promise<string | undefined> {
     const parts = filePath.split(path.sep);
     const projectsIndex = parts.indexOf('projects');
     if (projectsIndex === -1 || !parts[projectsIndex + 1]) return undefined;
@@ -531,15 +754,11 @@ export class ConversationParser {
       for (let len = segments.length - i; len >= 1; len--) {
         const candidate = segments.slice(i, i + len).join('-');
         const testPath = path.join(current, candidate);
-        try {
-          if (fs.existsSync(testPath)) {
-            current = testPath;
-            i += len;
-            found = true;
-            break;
-          }
-        } catch {
-          // ignore fs errors
+        if (await this.pathExists(testPath)) {
+          current = testPath;
+          i += len;
+          found = true;
+          break;
         }
       }
       if (!found) {
@@ -549,6 +768,15 @@ export class ConversationParser {
       }
     }
 
-    return fs.existsSync(current) ? current : undefined;
+    return (await this.pathExists(current)) ? current : undefined;
+  }
+
+  private async pathExists(p: string): Promise<boolean> {
+    try {
+      await fsp.access(p);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

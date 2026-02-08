@@ -142,6 +142,57 @@ export const onlyMetadataContent = line({
   snapshot: {},
 });
 
+/** A large conversation with many messages for stress testing */
+export function largeParsableConversation(messageCount = 500): string {
+  const lines: string[] = [];
+  for (let i = 0; i < messageCount; i++) {
+    const minutesAgo = messageCount - i;
+    if (i % 2 === 0) {
+      lines.push(userMessage(
+        i === 0 ? 'Build the authentication system' : `Follow-up message ${i}`,
+        minutesAgo
+      ));
+    } else {
+      const tools = i % 10 === 1
+        ? [{ name: 'Task', input: { subagent_type: 'Explore', description: `Explore step ${i}` } }]
+        : i % 10 === 3
+          ? [{ name: 'Bash', input: { command: `echo step-${i}` } }]
+          : [];
+      lines.push(assistantMessage(
+        i === messageCount - 1
+          ? "I've completed the authentication system. All done!"
+          : `Working on step ${i}...`,
+        minutesAgo,
+        tools
+      ));
+    }
+  }
+  return lines.join('\n');
+}
+
+/** A conversation with tool_use blocks containing large inputs */
+export const largeToolInputConversation = [
+  userMessage('Refactor the entire codebase', 30),
+  assistantMessage('', 28, [
+    {
+      name: 'Edit',
+      input: {
+        file_path: '/src/very/long/path/to/file.ts',
+        old_string: 'x'.repeat(500),
+        new_string: 'y'.repeat(500),
+      },
+    },
+    {
+      name: 'Write',
+      input: {
+        file_path: '/src/another/file.ts',
+        content: 'z'.repeat(1000),
+      },
+    },
+  ]),
+  assistantMessage("I've completed the refactoring. All done!", 25),
+].join('\n');
+
 /** An interrupted conversation */
 export const interruptedConversation = [
   userMessage('Run the test suite', 20),
@@ -158,4 +209,171 @@ export const interruptedConversation = [
     },
     toolUseResult: { interrupted: true },
   }),
+].join('\n');
+
+// ── BUG reproduction fixtures ────────────────────────────────────────
+
+/** BUG1 — Sidechain-only conversation: all messages are isSidechain=true.
+ *  Should be filtered out, not shown as a ghost "Untitled Conversation". */
+export const sidechainOnlyConversation = [
+  line({
+    type: 'user',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(20),
+    sessionId: 'test-session',
+    parentUuid: 'some-parent',
+    isSidechain: true,
+    message: { role: 'user', content: [{ type: 'text', text: 'sidechain user msg' }] },
+  }),
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(19),
+    sessionId: 'test-session',
+    parentUuid: 'some-parent',
+    isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'text', text: 'sidechain assistant msg' }] },
+  }),
+].join('\n');
+
+/** BUG1 — Mixed sidechain: real conversation with sidechain entries mixed in.
+ *  Title/description should come from non-sidechain messages only. */
+export const mixedSidechainConversation = [
+  userMessage('Implement the login page', 30),
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(28),
+    sessionId: 'test-session',
+    parentUuid: 'some-parent',
+    isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'text', text: 'Sidechain noise that should not appear' }] },
+  }),
+  assistantMessage("I've implemented the login page. All done!", 25),
+].join('\n');
+
+/** BUG3 — Empty conversation: only system-reminder content that gets stripped,
+ *  leaving no meaningful title, description, or lastMessage. */
+export const emptyMeaninglessConversation = [
+  line({
+    type: 'user',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(10),
+    sessionId: 'test-session',
+    parentUuid: null,
+    isSidechain: false,
+    message: { role: 'user', content: [{ type: 'text', text: '<system-reminder>hook output</system-reminder>' }] },
+  }),
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(9),
+    sessionId: 'test-session',
+    parentUuid: null,
+    isSidechain: false,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
+  }),
+].join('\n');
+
+/** BUG3 — Conversation with only assistant tool-use, no user text at all. */
+export const noUserTextConversation = [
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(10),
+    sessionId: 'test-session',
+    parentUuid: null,
+    isSidechain: false,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
+  }),
+].join('\n');
+
+// ── Sidechain activity fixtures ──────────────────────────────────────
+
+/** Conversation with sidechain activity — assistant tool_use (running),
+ *  user tool_result success (completed), user tool_result error (failed). */
+export const sidechainActivityConversation = [
+  userMessage('Build the auth system', 30),
+  // Sidechain: assistant dispatches Bash → running
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(28),
+    sessionId: 'test-session',
+    parentUuid: 'sc-parent',
+    isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] },
+  }),
+  // Sidechain: tool result success → completed
+  line({
+    type: 'user',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(27),
+    sessionId: 'test-session',
+    parentUuid: 'sc-parent',
+    isSidechain: true,
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'Tests passed', tool_use_id: 'tu1' }] },
+  }),
+  // Sidechain: tool result error → failed
+  line({
+    type: 'user',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(26),
+    sessionId: 'test-session',
+    parentUuid: 'sc-parent',
+    isSidechain: true,
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'Error: Exit code 1', tool_use_id: 'tu2', is_error: true }] },
+  }),
+  assistantMessage("I've completed the auth system. All done!", 20),
+].join('\n');
+
+// ── Rate limit fixtures ──────────────────────────────────────────────
+
+/** Conversation where Claude Code hit a rate limit. */
+export const rateLimitConversation = [
+  userMessage('Implement the search feature', 30),
+  assistantMessage('Working on the search feature...', 28, [{ name: 'Bash' }]),
+  assistantMessage("You've hit your limit \u00b7 resets 10am (Europe/Zurich)", 27),
+].join('\n');
+
+/** Conversation where rate limit message is in a tool_result. */
+export const rateLimitToolResultConversation = [
+  userMessage('Fix the tests', 20),
+  assistantMessage('Running tests...', 18, [{ name: 'Bash' }]),
+  line({
+    type: 'user',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(17),
+    sessionId: 'test-session',
+    parentUuid: null,
+    isSidechain: false,
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', content: "You've hit your limit \u00b7 resets 2:30pm (America/New_York)" }],
+    },
+  }),
+].join('\n');
+
+/** Rate limit in older messages but resolved by new activity — should NOT be flagged. */
+export const rateLimitResolvedConversation = [
+  userMessage('Build the API', 60),
+  assistantMessage("You've hit your limit \u00b7 resets 10am (Europe/Zurich)", 55),
+  userMessage('continue', 30),
+  assistantMessage("I've built the API. All done!", 28),
+].join('\n');
+
+/** Conversation with more than 3 sidechain entries — only last 3 should be kept. */
+export const manySidechainStepsConversation = [
+  userMessage('Large task', 30),
+  // 5 sidechain entries — only last 3 should survive
+  ...Array.from({ length: 5 }, (_, i) => line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    timestamp: ts(28 - i),
+    sessionId: 'test-session',
+    parentUuid: 'sc-parent',
+    isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: `Tool${i}`, input: {} }] },
+  })),
+  assistantMessage('All done!', 20),
 ].join('\n');

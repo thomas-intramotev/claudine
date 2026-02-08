@@ -4,6 +4,7 @@ import { StateManager } from '../services/StateManager';
 import { ClaudeCodeWatcher } from './ClaudeCodeWatcher';
 import { TabManager } from './TabManager';
 import {
+  Conversation,
   ExtensionToWebviewMessage,
   WebviewToExtensionMessage,
   ClaudineSettings
@@ -13,7 +14,9 @@ import {
   FOCUS_SUPPRESS_DURATION_MS,
   EDITOR_FOCUS_DELAY_MS,
   TAB_MAPPING_DELAY_MS,
-  NONCE_BYTES
+  NONCE_BYTES,
+  AUTO_RESTART_PROMPT,
+  AUTO_RESTART_GRACE_MS
 } from '../constants';
 
 export class KanbanViewProvider implements vscode.WebviewViewProvider {
@@ -23,8 +26,11 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
   private _disposables: vscode.Disposable[] = [];
   private _archiveTimer: ReturnType<typeof setInterval>;
   private _focusEditorTimer: ReturnType<typeof setTimeout> | undefined;
+  private _autoRestartTimer: ReturnType<typeof setTimeout> | undefined;
   private _secrets?: vscode.SecretStorage;
   private _tabManager: TabManager;
+  /** Fingerprints of last-sent conversations, keyed by ID. */
+  private _lastSentFingerprints = new Map<string, string>();
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -40,7 +46,7 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
     };
 
     this._stateManager.onConversationsChanged((conversations) => {
-      this.sendMessage({ type: 'updateConversations', conversations });
+      this.sendDiff(conversations);
     });
 
     this._archiveTimer = setInterval(() => {
@@ -71,17 +77,21 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-    webviewView.webview.onDidReceiveMessage(
-      (message: WebviewToExtensionMessage) => {
-        this.handleWebviewMessage(message);
-      }
+    this._disposables.push(
+      webviewView.webview.onDidReceiveMessage(
+        (message: WebviewToExtensionMessage) => {
+          this.handleWebviewMessage(message);
+        }
+      ),
+      webviewView.onDidChangeVisibility(() => {
+        if (webviewView.visible) {
+          this.refresh();
+          this.resumeArchiveTimer();
+        } else {
+          this.pauseArchiveTimer();
+        }
+      })
     );
-
-    webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible) {
-        this.refresh();
-      }
-    });
 
     // Track which editor/terminal is focused to detect active Claude Code conversation
     this._disposables.push(
@@ -152,7 +162,8 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       case 'updateSetting': {
         const ALLOWED_SETTING_KEYS = [
           'imageGenerationApi',
-          'enableSummarization'
+          'enableSummarization',
+          'autoRestartAfterRateLimit'
         ];
         if (message.key === 'imageGenerationApiKey') {
           this._secrets?.store('imageGenerationApiKey', String(message.value ?? '')).then(() => {
@@ -193,6 +204,25 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       case 'testApiConnection':
         this.testApiConnection();
         break;
+
+      case 'toggleAutoRestart': {
+        const cfg = vscode.workspace.getConfiguration('claudine');
+        const current = cfg.get<boolean>('autoRestartAfterRateLimit', false);
+        cfg.update('autoRestartAfterRateLimit', !current, vscode.ConfigurationTarget.Global).then(() => {
+          this.updateSettings();
+          if (!current) {
+            // Turning ON — schedule restart if there are rate-limited conversations
+            const limited = this._stateManager.getRateLimitedConversations();
+            if (limited.length > 0 && limited[0].rateLimitResetTime) {
+              this.scheduleAutoRestart(limited[0].rateLimitResetTime);
+            }
+          } else {
+            // Turning OFF — cancel pending timer
+            this.cancelAutoRestart();
+          }
+        });
+        break;
+      }
     }
   }
 
@@ -327,6 +357,42 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
     return this._tabManager.focusAnyClaudeTab();
   }
 
+  // ── Auto-restart after rate limit ────────────────────────────────────
+
+  /**
+   * Schedule auto-restart of rate-limited conversations at the given reset time
+   * (plus a grace period). If a timer is already set, it is replaced.
+   */
+  public scheduleAutoRestart(resetTimeIso: string) {
+    this.cancelAutoRestart();
+    const resetMs = new Date(resetTimeIso).getTime();
+    const delay = Math.max(0, resetMs - Date.now() + AUTO_RESTART_GRACE_MS);
+    console.log(`Claudine: Scheduling auto-restart in ${Math.round(delay / 1000)}s`);
+    this._autoRestartTimer = setTimeout(() => {
+      this.executeAutoRestart();
+    }, delay);
+  }
+
+  public cancelAutoRestart() {
+    if (this._autoRestartTimer !== undefined) {
+      clearTimeout(this._autoRestartTimer);
+      this._autoRestartTimer = undefined;
+    }
+  }
+
+  private async executeAutoRestart() {
+    this._autoRestartTimer = undefined;
+    const limited = this._stateManager.getRateLimitedConversations();
+    console.log(`Claudine: Auto-restarting ${limited.length} rate-limited conversation(s)`);
+    for (const conv of limited) {
+      try {
+        await this.sendPromptToConversation(conv.id, AUTO_RESTART_PROMPT);
+      } catch (err) {
+        console.error(`Claudine: Failed to auto-restart conversation ${conv.id}`, err);
+      }
+    }
+  }
+
   // ── Standard webview provider methods ────────────────────────────────
 
   public setSecretStorage(secrets: vscode.SecretStorage) {
@@ -336,6 +402,67 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
   public refresh() {
     const conversations = this._stateManager.getConversations();
     this.sendMessage({ type: 'updateConversations', conversations });
+    // Update fingerprints after full send
+    this._lastSentFingerprints.clear();
+    for (const c of conversations) {
+      this._lastSentFingerprints.set(c.id, this.fingerprint(c));
+    }
+  }
+
+  private fingerprint(c: Conversation): string {
+    const sc = c.sidechainSteps?.map(s => s.status[0]).join('') ?? '';
+    return `${c.status}|${c.updatedAt.getTime()}|${c.hasError}|${c.isInterrupted}|${c.hasQuestion}|${c.isRateLimited}|${c.icon ? '1' : '0'}|${c.title}|${c.lastMessage}|${sc}`;
+  }
+
+  private sendDiff(conversations: Conversation[]) {
+    // First send: always send full state
+    if (this._lastSentFingerprints.size === 0) {
+      this.sendMessage({ type: 'updateConversations', conversations });
+      for (const c of conversations) {
+        this._lastSentFingerprints.set(c.id, this.fingerprint(c));
+      }
+      return;
+    }
+
+    const currentIds = new Set<string>();
+    const changed: Conversation[] = [];
+
+    for (const c of conversations) {
+      currentIds.add(c.id);
+      const fp = this.fingerprint(c);
+      if (this._lastSentFingerprints.get(c.id) !== fp) {
+        changed.push(c);
+        this._lastSentFingerprints.set(c.id, fp);
+      }
+    }
+
+    // Find removed IDs
+    const removed: string[] = [];
+    for (const id of this._lastSentFingerprints.keys()) {
+      if (!currentIds.has(id)) {
+        removed.push(id);
+      }
+    }
+    for (const id of removed) {
+      this._lastSentFingerprints.delete(id);
+    }
+
+    // Nothing changed
+    if (changed.length === 0 && removed.length === 0) return;
+
+    // If most conversations changed, send full update (cheaper than many individual messages)
+    if (changed.length > conversations.length / 2) {
+      this.sendMessage({ type: 'updateConversations', conversations });
+      return;
+    }
+
+    // Send individual updates
+    for (const c of changed) {
+      this.sendMessage({ type: 'conversationUpdated', conversation: c });
+    }
+    if (removed.length > 0) {
+      this.sendMessage({ type: 'removeConversations', ids: removed });
+    }
   }
 
   private async loadDrafts() {
@@ -410,7 +537,8 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       claudeCodePath: config.get('claudeCodePath', '~/.claude'),
       enableSummarization: config.get('enableSummarization', false),
       hasApiKey: !!apiKey,
-      viewLocation: config.get('viewLocation', 'panel') as 'panel' | 'sidebar'
+      viewLocation: config.get('viewLocation', 'panel') as 'panel' | 'sidebar',
+      autoRestartAfterRateLimit: config.get('autoRestartAfterRateLimit', false)
     };
     this.sendMessage({ type: 'updateSettings', settings });
   }
@@ -450,9 +578,22 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private pauseArchiveTimer() {
+    clearInterval(this._archiveTimer);
+    this._archiveTimer = undefined!;
+  }
+
+  private resumeArchiveTimer() {
+    if (this._archiveTimer) return; // already running
+    this._archiveTimer = setInterval(() => {
+      this._stateManager.archiveStaleConversations();
+    }, ARCHIVE_CHECK_INTERVAL_MS);
+  }
+
   public dispose() {
     clearInterval(this._archiveTimer);
     clearTimeout(this._focusEditorTimer);
+    this.cancelAutoRestart();
     this._tabManager.dispose();
     for (const d of this._disposables) {
       d.dispose();

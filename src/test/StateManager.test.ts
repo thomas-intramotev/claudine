@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StateManager } from '../services/StateManager';
 import { Conversation, ConversationStatus } from '../types';
+import { NOTIFY_COALESCE_MS } from '../constants';
 
 // Create a mock storage instance reused across tests
 function createMockStorage() {
@@ -36,6 +37,7 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
     hasError: false,
     isInterrupted: false,
     hasQuestion: false,
+    isRateLimited: false,
     createdAt: new Date('2025-01-01T10:00:00Z'),
     updatedAt: new Date('2025-01-01T12:00:00Z'),
     ...overrides,
@@ -47,10 +49,15 @@ describe('StateManager', () => {
   let mockStorage: ReturnType<typeof createMockStorage>;
 
   beforeEach(async () => {
+    vi.useFakeTimers();
     mockStorage = createMockStorage();
     stateManager = new StateManager(mockStorage as never);
     // Wait for loadState to complete
     await stateManager.ready;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('basic CRUD', () => {
@@ -349,6 +356,7 @@ describe('StateManager', () => {
       const listener = vi.fn();
       stateManager.onConversationsChanged(listener);
       stateManager.setConversations([makeConversation()]);
+      vi.advanceTimersByTime(NOTIFY_COALESCE_MS);
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
@@ -357,6 +365,7 @@ describe('StateManager', () => {
       const listener = vi.fn();
       stateManager.onConversationsChanged(listener);
       stateManager.moveConversation('conv-1', 'done');
+      vi.advanceTimersByTime(NOTIFY_COALESCE_MS);
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
@@ -365,7 +374,60 @@ describe('StateManager', () => {
       const listener = vi.fn();
       stateManager.onConversationsChanged(listener);
       stateManager.removeConversation('conv-1');
+      vi.advanceTimersByTime(NOTIFY_COALESCE_MS);
       expect(listener).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('rate limit detection', () => {
+    it('fires onRateLimitDetected when conversation becomes rate-limited', async () => {
+      const handler = vi.fn();
+      stateManager.onRateLimitDetected(handler);
+
+      const conv = makeConversation({ isRateLimited: false });
+      stateManager.setConversations([conv]);
+      expect(handler).not.toHaveBeenCalled();
+
+      const rateLimited = makeConversation({
+        isRateLimited: true,
+        rateLimitResetDisplay: '10am (Europe/Zurich)',
+        updatedAt: new Date('2025-01-01T13:00:00Z'),
+      });
+      stateManager.updateConversation(rateLimited);
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler.mock.calls[0][0].isRateLimited).toBe(true);
+    });
+
+    it('does not fire onRateLimitDetected if already rate-limited', async () => {
+      const handler = vi.fn();
+      stateManager.onRateLimitDetected(handler);
+
+      const conv = makeConversation({
+        isRateLimited: true,
+        rateLimitResetDisplay: '10am (Europe/Zurich)',
+      });
+      stateManager.setConversations([conv]);
+      // First set fires it
+      handler.mockClear();
+
+      const updated = makeConversation({
+        isRateLimited: true,
+        rateLimitResetDisplay: '10am (Europe/Zurich)',
+        updatedAt: new Date('2025-01-01T13:00:00Z'),
+      });
+      stateManager.updateConversation(updated);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('getRateLimitedConversations returns only rate-limited conversations', () => {
+      stateManager.setConversations([
+        makeConversation({ id: 'a', isRateLimited: true }),
+        makeConversation({ id: 'b', isRateLimited: false }),
+        makeConversation({ id: 'c', isRateLimited: true }),
+      ]);
+      const limited = stateManager.getRateLimitedConversations();
+      expect(limited).toHaveLength(2);
+      expect(limited.map(c => c.id).sort()).toEqual(['a', 'c']);
     });
   });
 
