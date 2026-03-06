@@ -12,6 +12,9 @@
     extensionSearchMatchIds, loadDraftsFromExtension,
     expandAllCards, collapseAllCards,
     activeCategories, toggleCategory, clearCategoryFilter, getCategoryDetails,
+    activeProviders, toggleProvider, availableProviders,
+    activeStateFilters, toggleStateFilter, availableStateFilters,
+    hasActiveFilters, clearAllFilters,
     rateLimitInfo,
     indexingProgress, projectManifest,
     zoomLevel, zoomIn, zoomOut, zoomReset, restoreZoom, ZOOM_MIN, ZOOM_MAX,
@@ -22,6 +25,7 @@
     restoreSmartBoardState
   } from './stores/conversations';
   import type { Conversation, ConversationCategory } from './lib/vscode';
+  import type { StateFilterKey } from './stores/conversations';
   import { localeStrings, t } from './stores/locale';
   import { themePreference, resolvedTheme, cycleTheme } from './stores/theme';
 
@@ -32,6 +36,24 @@
   let showArchive = false;
 
   const allCategories: ConversationCategory[] = ['bug', 'user-story', 'feature', 'improvement', 'task'];
+
+  const stateFilterDetails: Record<StateFilterKey, { icon: string; label: string; color: string }> = {
+    'needs-attention': { icon: '⚠', label: 'Needs Attention', color: '#f59e0b' },
+    'hasQuestion':     { icon: '❓', label: 'Question',        color: '#8b5cf6' },
+    'isInterrupted':   { icon: '⏸', label: 'Interrupted',     color: '#ef4444' },
+    'hasError':        { icon: '❌', label: 'Error',           color: '#dc2626' },
+    'isRateLimited':   { icon: '⏳', label: 'Rate Limited',    color: '#f97316' },
+  };
+
+  const providerDetails: Record<string, { icon: string; label: string; color: string }> = {
+    'claude-code': { icon: '🤖', label: 'Claude Code', color: '#d97706' },
+    'codex':       { icon: '🔮', label: 'Codex',       color: '#7c3aed' },
+  };
+
+  function getProviderDetails(provider: string) {
+    return providerDetails[provider] || { icon: '🔧', label: provider, color: '#6b7280' };
+  }
+
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Debounce search queries → extension for JSONL full-text search
@@ -154,7 +176,7 @@
 
   function toggleFilter() {
     filterOpen = !filterOpen;
-    if (!filterOpen) clearCategoryFilter();
+    if (!filterOpen) clearAllFilters();
   }
 
   function toggleCompact() {
@@ -252,7 +274,7 @@
       <button class="sidebar-btn" class:active={searchOpen} on:click={toggleSearch} title="Search conversations" aria-label="Search conversations" aria-pressed={searchOpen}>
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10.02 10.727a5.5 5.5 0 1 1 .707-.707l3.127 3.126a.5.5 0 0 1-.708.708l-3.127-3.127ZM11 6.5a4.5 4.5 0 1 0-9 0 4.5 4.5 0 0 0 9 0Z"/></svg>
       </button>
-      <button class="sidebar-btn" class:active={filterOpen || $activeCategories.size > 0} on:click={toggleFilter} title="Filter by category" aria-label="Filter by category" aria-pressed={filterOpen}>
+      <button class="sidebar-btn" class:active={filterOpen || $hasActiveFilters} on:click={toggleFilter} title="Filter by category" aria-label="Filter by category" aria-pressed={filterOpen}>
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 14h-3a.5.5 0 0 1-.5-.5V9.329c0-.401-.156-.777-.439-1.061l-4-4A1.915 1.915 0 0 1 2.914 1h10.172a1.915 1.915 0 0 1 1.353 3.267l-4 4c-.283.284-.439.66-.439 1.061v4.171a.5.5 0 0 1-.5.5V14ZM7 13h2V9.329c0-.668.26-1.296.732-1.768l4-4a.915.915 0 0 0-.646-1.56H2.914a.915.915 0 0 0-.646 1.561l4 4c.473.472.732 1.1.732 1.768v3.671V13Z"/></svg>
       </button>
       <button class="sidebar-btn" class:active={$compactView} on:click={toggleCompact} title="Toggle compact / full view" aria-label="Toggle compact or full view" aria-pressed={$compactView}>
@@ -340,6 +362,45 @@
       <div class="filter-bar">
         <svg class="filter-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2z"/></svg>
         <div class="filter-chips">
+          <!-- Provider chips (only when multiple providers exist) -->
+          {#if $availableProviders.size > 1}
+            {#each [...$availableProviders] as provider}
+              {@const details = getProviderDetails(provider)}
+              <button
+                class="filter-chip"
+                class:active={$activeProviders.has(provider)}
+                style:--chip-color={details.color}
+                on:click={() => toggleProvider(provider)}
+                aria-pressed={$activeProviders.has(provider)}
+              >
+                <span class="chip-icon">{details.icon}</span>
+                <span class="chip-label">{details.label}</span>
+              </button>
+            {/each}
+            <span class="filter-divider"></span>
+          {/if}
+
+          <!-- State/problem chips -->
+          {#if $availableStateFilters.size > 0}
+            {#each ['needs-attention', 'hasQuestion', 'isInterrupted', 'hasError', 'isRateLimited'] as key}
+              {#if $availableStateFilters.has(key)}
+                {@const details = stateFilterDetails[key]}
+                <button
+                  class="filter-chip"
+                  class:active={$activeStateFilters.has(key)}
+                  style:--chip-color={details.color}
+                  on:click={() => toggleStateFilter(key)}
+                  aria-pressed={$activeStateFilters.has(key)}
+                >
+                  <span class="chip-icon">{details.icon}</span>
+                  <span class="chip-label">{details.label}</span>
+                </button>
+              {/if}
+            {/each}
+            <span class="filter-divider"></span>
+          {/if}
+
+          <!-- Category chips -->
           {#each allCategories as cat}
             {@const details = getCategoryDetails(cat)}
             <button
@@ -354,8 +415,8 @@
             </button>
           {/each}
         </div>
-        {#if $activeCategories.size > 0}
-          <button class="filter-clear" on:click={clearCategoryFilter} title="Clear filter">
+        {#if $hasActiveFilters}
+          <button class="filter-clear" on:click={clearAllFilters} title="Clear all filters">
             <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/></svg>
           </button>
         {/if}
@@ -593,6 +654,13 @@
     background: color-mix(in srgb, var(--chip-color, #8c8c8c) 20%, transparent);
     border-color: var(--chip-color, #8c8c8c);
     color: var(--vscode-foreground, #cccccc);
+  }
+  .filter-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--vscode-panel-border, #3c3c3c);
+    flex-shrink: 0;
+    margin: 0 2px;
   }
   .chip-icon { font-size: 11px; line-height: 1; }
   .chip-label { font-size: 10px; }
