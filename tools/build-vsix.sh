@@ -15,7 +15,7 @@ if node -e "
   process.exit(1);
 "; then
   echo "Updating package version: $current_version -> $release_version"
-  npm version "$release_version" --no-git-tag-version >/dev/null
+  npm version "$release_version" --no-git-tag-version --force >/dev/null
 else
   echo "Package version $current_version is already >= changelog version $release_version — skipping"
 fi
