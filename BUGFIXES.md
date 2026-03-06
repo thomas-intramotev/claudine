@@ -170,3 +170,19 @@
 - **Symptom:** Clicking a task card for a Codex conversation opens a new, empty Claude Code conversation instead of opening the conversation in the Codex extension.
 - **Root cause:** In `extension.ts`, only `ClaudeCodeEditorCommands` is instantiated and passed to `KanbanViewProvider`. The provider-specific `CodexEditorCommands` class exists but is never used. When `openConversation()` is called for a Codex conversation, it always delegates to `ClaudeCodeEditorCommands`, which calls `claude-vscode.editor.open` with the Codex conversation ID. The Claude extension doesn't recognize this ID, so it opens a blank new conversation.
 - [✔️] Fixed — added provider-aware editor command routing to `KanbanViewProvider`; `openConversation`, `sendPrompt`, and `interruptTerminals` now resolve the correct `IEditorCommands` via the conversation's `provider` field; `CodexEditorCommands.openConversation` opens the session JSONL file as a fallback until the Codex extension exposes public commands
+
+## BUG19 — Context menu not visible (clipped by transform/overflow ancestors)
+
+- **Reported:** 2026-03-06
+- **Symptom:** Right-clicking a task card shows no context menu at all. The menu is rendered but invisible.
+- **Root cause:** The context menu uses `position: fixed` inside a DOM tree that includes `transform: scale(...)` on `.kanban-board` (when zoom != 1) and `overflow: hidden` on `.zoom-wrapper`. CSS `transform` creates a new containing block, making `position: fixed` act like `position: absolute` relative to the transformed ancestor. Combined with `overflow: hidden`, the menu is clipped entirely. Also affects SmartBoard (`style:zoom`) and MultiProjectView (`overflow: hidden` on `.project-content`).
+- [✔️] Fixed — portaled the context menu element to `document.body` via a Svelte action, escaping all overflow/transform containers
+
+## BUG18 — Conversations with background agents not shown as "In Progress" and missing agent dots
+
+- **Reported:** 2026-03-06
+- **Symptom:** When a Claude Code conversation dispatches multiple background agents (via the Task tool), the kanban card (a) doesn't show a dot per running agent — it shows at most 3 dots regardless of agent count, and (b) gets placed in "In Review" instead of "In Progress" because the main thread's last message contains completion-like text ("All done", "completed") even though background agents are still running.
+- **Root cause:** Two issues:
+  1. `collectSidechainStep()` uses a flat ring buffer capped at `MAX_SIDECHAIN_STEPS = 3`. All sidechain entries from all agents are mixed into one stream, losing per-agent identity. 5 agents running → only last 3 tool activity steps shown, not 5 agent dots.
+  2. `detectStatus()` only examines main-thread messages. It never checks `sidechainSteps` for running agents, so completion patterns in the main thread override the fact that background agents are still working.
+- [✔️] Fixed — `collectSidechainStep()` now tracks per-agent status by tracing `parentUuid` chains: each distinct sidechain gets one dot showing its latest status. `detectStatus()` now checks for running sidechain agents and returns `in-progress` instead of `in-review` when background agents are still working

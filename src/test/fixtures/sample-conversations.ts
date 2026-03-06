@@ -473,3 +473,94 @@ export const markupInLastMessageConversation = [
   assistantMessage('Starting work...', 9),
   assistantMessage('<system-reminder>hook output</system-reminder>Done! Dark mode is now available.', 8),
 ].join('\n');
+
+// ── BUG18: Multi-agent sidechain tracking ──────────────────────────────
+
+/** BUG18 — Multiple distinct background agents running. Each agent has a different
+ *  parentUuid chain. Should show one dot per agent (5 agents → 5 dots). */
+export const multiAgentSidechainConversation = [
+  userMessage('Implement the full feature', 30),
+  // Main thread dispatches 5 Task tool uses
+  assistantMessage('I\'ll dispatch 5 agents to work on this.', 28, [
+    { name: 'Task', input: { subagent_type: 'Explore', description: 'Explore codebase' } },
+    { name: 'Task', input: { subagent_type: 'Plan', description: 'Create plan' } },
+    { name: 'Task', input: { subagent_type: 'general-purpose', description: 'Research API' } },
+    { name: 'Task', input: { subagent_type: 'code-reviewer', description: 'Review code' } },
+    { name: 'Task', input: { subagent_type: 'test-runner', description: 'Run tests' } },
+  ]),
+  // Agent 1 (parentUuid chain: agent-1-root → agent-1-a → agent-1-b)
+  line({
+    type: 'assistant', uuid: 'agent-1-a', timestamp: ts(27), sessionId: 'test-session',
+    parentUuid: 'agent-1-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Grep', input: {} }] },
+  }),
+  line({
+    type: 'user', uuid: 'agent-1-b', timestamp: ts(26), sessionId: 'test-session',
+    parentUuid: 'agent-1-a', isSidechain: true,
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'Found 3 matches' }] },
+  }),
+  // Agent 2 (parentUuid chain: agent-2-root → agent-2-a)
+  line({
+    type: 'assistant', uuid: 'agent-2-a', timestamp: ts(26), sessionId: 'test-session',
+    parentUuid: 'agent-2-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] },
+  }),
+  // Agent 3 (parentUuid chain: agent-3-root → agent-3-a → agent-3-b)
+  line({
+    type: 'assistant', uuid: 'agent-3-a', timestamp: ts(25), sessionId: 'test-session',
+    parentUuid: 'agent-3-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
+  }),
+  line({
+    type: 'user', uuid: 'agent-3-b', timestamp: ts(24), sessionId: 'test-session',
+    parentUuid: 'agent-3-a', isSidechain: true,
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'Error: Exit code 1', is_error: true }] },
+  }),
+  // Agent 4 (parentUuid chain: agent-4-root → agent-4-a)
+  line({
+    type: 'assistant', uuid: 'agent-4-a', timestamp: ts(23), sessionId: 'test-session',
+    parentUuid: 'agent-4-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Edit', input: {} }] },
+  }),
+  // Agent 5 (parentUuid chain: agent-5-root → agent-5-a → agent-5-b)
+  line({
+    type: 'assistant', uuid: 'agent-5-a', timestamp: ts(22), sessionId: 'test-session',
+    parentUuid: 'agent-5-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Write', input: {} }] },
+  }),
+  line({
+    type: 'user', uuid: 'agent-5-b', timestamp: ts(21), sessionId: 'test-session',
+    parentUuid: 'agent-5-a', isSidechain: true,
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'File written successfully' }] },
+  }),
+  assistantMessage("I've completed the implementation. All done!", 20),
+].join('\n');
+
+/** BUG18 — Main thread says "completed" but agents are still running (last sidechain
+ *  step has status 'running'). Should be in-progress, NOT in-review. */
+export const completedWithRunningAgentsConversation = [
+  userMessage('Build the auth system', 30),
+  assistantMessage('Dispatching agents to work on this.', 28, [
+    { name: 'Task', input: { subagent_type: 'Explore', description: 'Explore codebase' } },
+    { name: 'Task', input: { subagent_type: 'Plan', description: 'Create plan' } },
+  ]),
+  // Agent 1: completed
+  line({
+    type: 'assistant', uuid: 'bg-1-a', timestamp: ts(27), sessionId: 'test-session',
+    parentUuid: 'bg-1-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] },
+  }),
+  line({
+    type: 'user', uuid: 'bg-1-b', timestamp: ts(26), sessionId: 'test-session',
+    parentUuid: 'bg-1-a', isSidechain: true,
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'File contents...' }] },
+  }),
+  // Agent 2: still running (dispatched tool_use, no result yet)
+  line({
+    type: 'assistant', uuid: 'bg-2-a', timestamp: ts(25), sessionId: 'test-session',
+    parentUuid: 'bg-2-root', isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
+  }),
+  // Main thread says "completed" despite agent 2 still running
+  assistantMessage("I've finished setting up the auth system. All done!", 20),
+].join('\n');

@@ -435,32 +435,73 @@ describe('ConversationParser', () => {
   });
 
   describe('sidechain activity dots', () => {
-    it('collects sidechain steps with correct statuses', async () => {
+    it('shows one step per agent with latest status (single agent)', async () => {
+      // BUG18: sidechainActivityConversation has 3 entries all from the same
+      // agent (same parentUuid 'sc-parent'). Per-agent tracking → 1 step
+      // with the final status.
       const result = await parseContent(fixtures.sidechainActivityConversation);
       expect(result).not.toBeNull();
       expect(result!.sidechainSteps).toBeDefined();
-      expect(result!.sidechainSteps).toHaveLength(3);
-      // running (assistant tool_use), completed (tool_result ok), failed (tool_result error)
-      expect(result!.sidechainSteps![0].status).toBe('running');
+      expect(result!.sidechainSteps).toHaveLength(1);
+      // Final status: failed (last entry was an error tool_result)
+      expect(result!.sidechainSteps![0].status).toBe('failed');
       expect(result!.sidechainSteps![0].toolName).toBe('Bash');
-      expect(result!.sidechainSteps![1].status).toBe('completed');
-      expect(result!.sidechainSteps![2].status).toBe('failed');
     });
 
-    it('keeps only the last 3 sidechain steps', async () => {
+    it('keeps only the last step per agent (single agent = 1 step)', async () => {
+      // BUG18: manySidechainStepsConversation has 5 entries all from the same
+      // agent (same parentUuid chain root). Per-agent tracking → 1 step.
       const result = await parseContent(fixtures.manySidechainStepsConversation);
       expect(result).not.toBeNull();
-      expect(result!.sidechainSteps).toHaveLength(3);
-      // Last 3 of 5 entries: Tool2, Tool3, Tool4
-      expect(result!.sidechainSteps![0].toolName).toBe('Tool2');
-      expect(result!.sidechainSteps![1].toolName).toBe('Tool3');
-      expect(result!.sidechainSteps![2].toolName).toBe('Tool4');
+      expect(result!.sidechainSteps).toHaveLength(1);
+      // Last entry in the chain is Tool4
+      expect(result!.sidechainSteps![0].toolName).toBe('Tool4');
     });
 
     it('returns undefined sidechainSteps when no sidechain entries', async () => {
       const result = await parseContent(fixtures.completedConversation);
       expect(result).not.toBeNull();
       expect(result!.sidechainSteps).toBeUndefined();
+    });
+  });
+
+  describe('BUG18 — multi-agent sidechain tracking and status override', () => {
+    it('shows one dot per distinct agent, not a flat ring buffer', async () => {
+      const result = await parseContent(fixtures.multiAgentSidechainConversation);
+      expect(result).not.toBeNull();
+      expect(result!.sidechainSteps).toBeDefined();
+      // 5 distinct agents → 5 sidechain steps (one per agent)
+      expect(result!.sidechainSteps).toHaveLength(5);
+    });
+
+    it('tracks correct per-agent status (completed, running, failed)', async () => {
+      const result = await parseContent(fixtures.multiAgentSidechainConversation);
+      expect(result).not.toBeNull();
+      const steps = result!.sidechainSteps!;
+      // Agent 1: tool_use(Grep) → tool_result(ok) → completed
+      expect(steps.find(s => s.toolName === 'Grep')?.status).toBe('completed');
+      // Agent 2: tool_use(Read) → still running (no result)
+      expect(steps.find(s => s.toolName === 'Read')?.status).toBe('running');
+      // Agent 3: tool_use(Bash) → tool_result(error) → failed
+      expect(steps.find(s => s.toolName === 'Bash')?.status).toBe('failed');
+      // Agent 4: tool_use(Edit) → still running
+      expect(steps.find(s => s.toolName === 'Edit')?.status).toBe('running');
+      // Agent 5: tool_use(Write) → tool_result(ok) → completed
+      expect(steps.find(s => s.toolName === 'Write')?.status).toBe('completed');
+    });
+
+    it('detects in-progress (not in-review) when background agents are still running', async () => {
+      // BUG18: main thread says "All done!" but agent 2 is still running
+      const result = await parseContent(fixtures.completedWithRunningAgentsConversation);
+      expect(result).not.toBeNull();
+      expect(result!.status).toBe('in-progress');
+    });
+
+    it('detects in-review when all background agents have completed', async () => {
+      const result = await parseContent(fixtures.sidechainActivityConversation);
+      expect(result).not.toBeNull();
+      // sidechainActivityConversation: all sidechain entries are completed/failed, main says "All done"
+      expect(result!.status).toBe('in-review');
     });
   });
 

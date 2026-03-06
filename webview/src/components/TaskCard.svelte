@@ -61,6 +61,19 @@
   let contextMenuY = 0;
   let contextMenuEl: HTMLDivElement;
 
+  /**
+   * Svelte action: moves element to document.body so it escapes
+   * overflow/transform containers that break position:fixed.
+   */
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
+
   $: contextMoveTargets = conversation.isDraft
     ? []
     : [
@@ -527,6 +540,7 @@
 {#if contextMenuVisible}
   <div
     class="context-menu"
+    use:portal
     bind:this={contextMenuEl}
     style="left: {contextMenuX}px; top: {contextMenuY}px;"
   >

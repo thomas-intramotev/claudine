@@ -21,14 +21,17 @@ import {
   RATE_LIMIT_PATTERN
 } from '../constants';
 
-/** Maximum number of sidechain activity steps to retain (ring buffer). */
-const MAX_SIDECHAIN_STEPS = 3;
-
 /** Cached intermediate state for incremental parsing. */
 interface ParseCache {
   byteOffset: number;
   messages: ParsedMessage[];
   sidechainSteps: SidechainStep[];
+  /** Maps each sidechain message UUID to its root parent (the parentUuid of the
+   *  first message in that sidechain chain — i.e. the main-thread message that
+   *  spawned the agent). */
+  sidechainUuidToRoot: Map<string, string>;
+  /** Latest step status per agent, keyed by root parentUuid. */
+  sidechainAgentStatus: Map<string, SidechainStep>;
   firstTimestamp: string | undefined;
   lastTimestamp: string | undefined;
   gitBranch: string | undefined;
@@ -114,6 +117,8 @@ export class ConversationParser {
       byteOffset: fileSize,
       messages: [],
       sidechainSteps: [],
+      sidechainUuidToRoot: new Map(),
+      sidechainAgentStatus: new Map(),
       firstTimestamp: undefined,
       lastTimestamp: undefined,
       gitBranch: undefined,
@@ -186,7 +191,10 @@ export class ConversationParser {
     }
   }
 
-  /** Extract a sidechain activity step from a sidechain JSONL entry. */
+  /** Extract a sidechain activity step from a sidechain JSONL entry.
+   *  BUG18: Groups by agent — each distinct sidechain (identified by tracing
+   *  parentUuid chains back to a main-thread message) gets one dot showing its
+   *  latest status. */
   private collectSidechainStep(entry: ClaudeCodeJsonlEntry, cache: ParseCache) {
     if (!entry.message) return;
 
@@ -216,11 +224,34 @@ export class ConversationParser {
       return; // Not informative enough to show
     }
 
-    cache.sidechainSteps.push(step);
-    // Keep only the last N steps
-    if (cache.sidechainSteps.length > MAX_SIDECHAIN_STEPS) {
-      cache.sidechainSteps.splice(0, cache.sidechainSteps.length - MAX_SIDECHAIN_STEPS);
+    // Determine which agent this entry belongs to by tracing parentUuid
+    const parentUuid = entry.parentUuid || '';
+    let rootParent: string;
+
+    if (cache.sidechainUuidToRoot.has(parentUuid)) {
+      // Parent is a known sidechain message → same agent chain
+      rootParent = cache.sidechainUuidToRoot.get(parentUuid)!;
+    } else {
+      // Parent is NOT a known sidechain message → new agent (parentUuid
+      // points back to a main-thread message that spawned this sidechain)
+      rootParent = parentUuid;
     }
+
+    // Register this entry's UUID so subsequent messages in the same chain
+    // can be traced back to this agent
+    cache.sidechainUuidToRoot.set(entry.uuid, rootParent);
+
+    // Update this agent's latest status (toolName from the latest informative step)
+    const existing = cache.sidechainAgentStatus.get(rootParent);
+    cache.sidechainAgentStatus.set(rootParent, {
+      ...step,
+      // Preserve the toolName from the initial dispatch if the current step
+      // doesn't have one (e.g. a completion step without a tool name)
+      toolName: step.toolName || existing?.toolName,
+    });
+
+    // Rebuild sidechainSteps from per-agent statuses
+    cache.sidechainSteps = Array.from(cache.sidechainAgentStatus.values());
   }
 
   private parseMessage(entry: ClaudeCodeJsonlEntry): ParsedMessage | null {
@@ -389,7 +420,7 @@ export class ConversationParser {
       return null;
     }
 
-    const status = this.detectStatus(messages);
+    const status = this.detectStatus(messages, sidechainSteps);
     const category = this._classifier.classify(title, description, messages);
     const agents = this.detectAgents(messages);
     const hasError = this.hasRecentError(messages);
@@ -487,7 +518,7 @@ export class ConversationParser {
     return combined;
   }
 
-  private detectStatus(messages: ParsedMessage[]): ConversationStatus {
+  private detectStatus(messages: ParsedMessage[], sidechainSteps: SidechainStep[] = []): ConversationStatus {
     if (messages.length === 0) return 'todo';
 
     const hasAssistant = messages.some(m => m.role === 'assistant');
@@ -529,11 +560,20 @@ export class ConversationParser {
         }
       }
 
-      // Check for completion
+      // BUG18: If any background agent is still running, the conversation is
+      // actively working regardless of what the main thread says.
+      const hasRunningAgents = sidechainSteps.some(s => s.status === 'running');
+
+      // Check for completion (only when no background agents are still running)
       if (
+        !hasRunningAgents &&
         /\b(all (done|set|changes)|completed?|finished|i've (made|completed|finished|implemented)|successfully|here's a summary)\b/i.test(content)
       ) {
         return 'in-review';
+      }
+
+      if (hasRunningAgents) {
+        return 'in-progress';
       }
     }
 

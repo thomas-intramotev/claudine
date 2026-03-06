@@ -1,5 +1,14 @@
 # Release Notes
 
+## Version 1.2.8 (Mar 7 2026, 00:06)
+
+* **Fix: Context menu not visible** — right-click context menu on task cards was invisible when the board was zoomed (transform/overflow clipping); menu is now portaled to document.body to escape all CSS containment
+
+## Version 1.2.7 (Mar 6 2026, 23:55)
+
+* **Fix: Background agent dots** — conversations with multiple background agents now show one dot per agent instead of capping at 3 activity steps; each dot reflects the agent's latest status (running/completed/failed)
+* **Fix: In Progress column** — conversations with running background agents now stay in "In Progress" even when the main thread says "All done"; previously they were incorrectly placed in "In Review"
+
 ## Version 1.2.6 (Mar 6 2026, 20:00)
 
 * **Codex summarization** — Codex conversations now get AI-summarized titles and descriptions for compact kanban cards, using Claude CLI or Codex CLI as fallback
