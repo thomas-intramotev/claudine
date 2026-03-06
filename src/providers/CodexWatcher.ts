@@ -92,13 +92,15 @@ export class CodexWatcher implements IConversationProvider {
 
   // ── Scanning ─────────────────────────────────────────────────────
 
-  public async refresh() {
+  public async refresh(): Promise<Conversation[]> {
     try {
       const conversations = await this.scanForConversations();
       console.log(`Claudine: Codex — found ${conversations.length} conversations`);
       this._stateManager.setConversations(conversations, 'codex');
+      return conversations;
     } catch (error) {
       console.error('Claudine: Codex — error refreshing conversations', error);
+      return [];
     }
   }
 

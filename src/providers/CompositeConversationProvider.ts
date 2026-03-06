@@ -56,8 +56,9 @@ export class CompositeConversationProvider implements IConversationProvider {
 
   // ── Scanning ─────────────────────────────────────────────────────
 
-  async refresh(): Promise<void> {
-    await Promise.all(this._children.map(c => c.refresh()));
+  async refresh(): Promise<Conversation[]> {
+    const results = await Promise.all(this._children.map(c => c.refresh()));
+    return results.flat();
   }
 
   searchConversations(query: string): string[] {

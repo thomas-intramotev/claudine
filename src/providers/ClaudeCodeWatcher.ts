@@ -113,7 +113,7 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     }
   }
 
-  public async refresh() {
+  public async refresh(): Promise<Conversation[]> {
     try {
       const conversations = await this.scanForConversations();
       console.log(`Claudine: Found ${conversations.length} conversations`);
@@ -136,8 +136,11 @@ export class ClaudeCodeWatcher implements IConversationProvider {
 
       // Kick off async icon generation for conversations without icons
       this.generateIcons(conversations);
+
+      return conversations;
     } catch (error) {
       console.error('Claudine: Error refreshing conversations', error);
+      return [];
     }
   }
 

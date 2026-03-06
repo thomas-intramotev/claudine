@@ -33,7 +33,7 @@ export interface IConversationProvider {
   // ── Scanning & search ──────────────────────────────────────────────
 
   /** Scan all conversation sources and update the state manager. */
-  refresh(): Promise<void>;
+  refresh(): Promise<Conversation[]>;
   /** Full-text search across raw conversation data. Returns matching conversation IDs. */
   searchConversations(query: string): string[];
 
