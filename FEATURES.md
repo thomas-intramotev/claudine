@@ -70,6 +70,16 @@
 - [x] Search result display modes: Fade (dim non-matches) or Hide (remove non-matches)
 - [x] Matching cards auto-expand in compact view
 
+## Enhanced Filter Bar
+
+- [x] Provider filter chips (Claude Code, Codex) — multi-select, shown when >1 provider
+- [x] State/problem filter chips — Needs Attention, Question, Interrupted, Error, Rate Limited
+- [x] "Needs Attention" meta-filter (union of all problem states)
+- [x] Individual + meta intersection behavior
+- [x] Chips auto-hide when no conversations match that state
+- [x] Clear-all button resets all filter groups
+- [x] Visual dividers between chip groups
+
 ## Conversation Actions
 
 - [x] Click card title to open in Claude Code editor

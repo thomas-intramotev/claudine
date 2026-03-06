@@ -1,5 +1,10 @@
 # Release Notes
 
+## Version 1.2.5 (Mar 6 2026, 12:30)
+
+* **Enhanced filter bar** — filter conversations by AI service (Claude Code, Codex) and by problem state (Needs Attention, Question, Interrupted, Error, Rate Limited); chips are multi-select and auto-hide when not applicable
+* **Fix: Codex conversations in standalone mode** — Codex conversations now appear correctly in the standalone task panel; previously they were missing because the progressive scan only included Claude Code
+
 ## Version 1.2.4 (Mar 6 2026, 09:58)
 
 * **Task card context menu** — right-click any task card to open conversation, move to a different column, or archive immediately; draft cards show "Send idea" and "Delete idea"
