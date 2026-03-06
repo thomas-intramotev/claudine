@@ -23,4 +23,4 @@ cleanup() {
 trap cleanup EXIT
 
 cp README.marketplace.md README.md
-npx @vscode/vsce package --no-dependencies "$@"
+npx @vscode/vsce package --no-dependencies

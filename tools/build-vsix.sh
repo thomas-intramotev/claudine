@@ -25,5 +25,6 @@ npm ci
 npm run compile
 npm run build:webview
 
-tools/package-vsix.sh "$release_version"
-echo "Built claudine-$release_version.vsix"
+actual_version="$(node -p "require('./package.json').version")"
+tools/package-vsix.sh
+echo "Built claudine-$actual_version.vsix"
