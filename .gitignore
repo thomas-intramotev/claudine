@@ -13,4 +13,4 @@ webview/dist/
 .GIT_NEXT_COMMIT_MESSAGE.md
 
 .claude/
-tools/
+tools/deploy-website.sh
