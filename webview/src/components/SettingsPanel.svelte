@@ -8,6 +8,7 @@
   let saved = false;
   let testing = false;
   let testResult: 'success' | 'error' | null = null;
+  let pendingBrowseAction: 'set-single' | 'add-multi' | null = null;
 
   function updateSetting(key: string, value: unknown) {
     vscode.postMessage({ type: 'updateSetting', key, value });
@@ -19,19 +20,30 @@
     vscode.postMessage({ type: 'testApiConnection' });
   }
 
-  // Listen for test result from extension
-  function handleTestResult(event: MessageEvent) {
+  function handleMessage(event: MessageEvent) {
     const msg = event.data;
     if (msg.type === 'apiTestResult') {
       testing = false;
       testResult = msg.success ? 'success' : 'error';
       setTimeout(() => { testResult = null; }, 3000);
     }
+    if (msg.type === 'folderSelected' && msg.path) {
+      const current = $settings.monitoredWorkspace;
+      if (pendingBrowseAction === 'set-single') {
+        updateSetting('monitoredWorkspace', { mode: 'single', path: msg.path });
+      } else if (pendingBrowseAction === 'add-multi') {
+        const existing = current.mode === 'multi' ? current.paths : [];
+        if (!existing.includes(msg.path)) {
+          updateSetting('monitoredWorkspace', { mode: 'multi', paths: [...existing, msg.path] });
+        }
+      }
+      pendingBrowseAction = null;
+    }
   }
 
   import { onMount, onDestroy } from 'svelte';
-  onMount(() => window.addEventListener('message', handleTestResult));
-  onDestroy(() => window.removeEventListener('message', handleTestResult));
+  onMount(() => window.addEventListener('message', handleMessage));
+  onDestroy(() => window.removeEventListener('message', handleMessage));
 
   function handleApiChange(e: Event) {
     const val = (e.target as HTMLSelectElement).value;
@@ -54,6 +66,40 @@
   function regenerateIcons() {
     vscode.postMessage({ type: 'regenerateIcons' });
   }
+
+  function browseFolder(action: 'set-single' | 'add-multi') {
+    pendingBrowseAction = action;
+    vscode.postMessage({ type: 'browseWorkspaceFolder' });
+  }
+
+  function handleModeChange(e: Event) {
+    const mode = (e.target as HTMLSelectElement).value;
+    if (mode === 'auto') {
+      updateSetting('monitoredWorkspace', { mode: 'auto' });
+    } else if (mode === 'single') {
+      updateSetting('monitoredWorkspace', { mode: 'single', path: '' });
+    } else if (mode === 'multi') {
+      updateSetting('monitoredWorkspace', { mode: 'multi', paths: [] });
+    }
+  }
+
+  function removeMonitoredPath(pathToRemove: string) {
+    const current = $settings.monitoredWorkspace;
+    if (current.mode === 'multi') {
+      updateSetting('monitoredWorkspace', {
+        mode: 'multi',
+        paths: current.paths.filter((p: string) => p !== pathToRemove)
+      });
+    }
+  }
+
+  function formatPath(p: string): string {
+    const parts = p.split('/');
+    if (parts.length > 3) {
+      return '\u2026/' + parts.slice(-2).join('/');
+    }
+    return p;
+  }
 </script>
 
 {#if visible}
@@ -61,6 +107,52 @@
     <div class="settings-header">
       <span>Settings</span>
     </div>
+
+    <div class="field">
+      <span class="field-label">Monitored Workspace</span>
+      <select value={$settings.monitoredWorkspace.mode} on:change={handleModeChange}>
+        <option value="auto">Auto (VSCode workspace)</option>
+        <option value="single">Single path</option>
+        <option value="multi">Multiple paths</option>
+      </select>
+    </div>
+
+    {#if $settings.monitoredWorkspace.mode === 'auto'}
+      <div class="workspace-info">
+        {#if $settings.detectedWorkspacePaths.length > 0}
+          {#each $settings.detectedWorkspacePaths as wsPath}
+            <span class="path-chip" title={wsPath}>{formatPath(wsPath)}</span>
+          {/each}
+        {:else}
+          <span class="path-warning">No workspace detected — scanning all projects</span>
+        {/if}
+      </div>
+    {:else if $settings.monitoredWorkspace.mode === 'single'}
+      <div class="workspace-info">
+        {#if $settings.monitoredWorkspace.path}
+          <span class="path-chip" title={$settings.monitoredWorkspace.path}>
+            {formatPath($settings.monitoredWorkspace.path)}
+          </span>
+        {/if}
+        <button class="browse-btn" on:click={() => browseFolder('set-single')}>
+          {$settings.monitoredWorkspace.path ? 'Change\u2026' : 'Browse\u2026'}
+        </button>
+      </div>
+    {:else if $settings.monitoredWorkspace.mode === 'multi'}
+      <div class="workspace-info">
+        {#if $settings.monitoredWorkspace.paths && $settings.monitoredWorkspace.paths.length > 0}
+          {#each $settings.monitoredWorkspace.paths as wsPath}
+            <span class="path-chip removable" title={wsPath}>
+              {formatPath(wsPath)}
+              <button class="remove-path" on:click={() => removeMonitoredPath(wsPath)}>&#10005;</button>
+            </span>
+          {/each}
+        {:else}
+          <span class="path-hint">No paths configured</span>
+        {/if}
+        <button class="browse-btn" on:click={() => browseFolder('add-multi')}>Add path&hellip;</button>
+      </div>
+    {/if}
 
     <label class="field">
       <span class="field-label">Image Generation</span>
@@ -285,4 +377,63 @@
     align-self: flex-start;
   }
   .regen-btn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+
+  /* Monitored Workspace */
+  .workspace-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .path-chip {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--vscode-input-foreground, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .path-chip.removable {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .remove-path {
+    background: none;
+    border: none;
+    color: var(--vscode-descriptionForeground, #8c8c8c);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0 2px;
+    line-height: 1;
+  }
+  .remove-path:hover {
+    color: var(--vscode-errorForeground, #f48771);
+  }
+  .path-warning {
+    font-size: 9px;
+    color: var(--vscode-editorWarning-foreground, #cca700);
+    font-style: italic;
+  }
+  .path-hint {
+    font-size: 9px;
+    color: var(--vscode-descriptionForeground, #8c8c8c);
+    font-style: italic;
+  }
+  .browse-btn {
+    padding: 3px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-panel-border, #404040);
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #cccccc);
+    font-size: 10px;
+    cursor: pointer;
+    align-self: flex-start;
+  }
+  .browse-btn:hover {
+    background: var(--vscode-button-secondaryHoverBackground, #45494e);
+  }
 </style>
