@@ -69,7 +69,7 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
         ];
       }
       return [];
-    }) as typeof fs.readdirSync);
+    }) as unknown as typeof fs.readdirSync);
   });
 
   it('auto mode with workspace folders scans only matching dirs', () => {

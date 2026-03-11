@@ -5,6 +5,22 @@ All notable changes to the Claudine extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.5]
+
+### Added
+
+- Monitored Workspace setting in Settings panel — see which workspace path(s) are currently being scanned; switch between Auto (VSCode workspace detection), Single path (native folder picker), or Multiple paths (add/remove list)
+- `MonitoredWorkspace` discriminated union type (`auto | single | multi`) and `detectedWorkspacePaths` field on `ClaudineSettings`
+- `getEffectiveWorkspaceFolders()` helper in ClaudeCodeWatcher centralizing workspace resolution for `getProjectDirsToScan()` and `isFromCurrentWorkspace()`
+- `browseWorkspaceFolder` / `folderSelected` message pair for native folder picker flow between webview and extension host
+- `getWorkspacePaths()` optional method on `IConversationProvider` for exposing detected workspace paths to the UI
+- `claudine.monitoredWorkspace` configuration property in `package.json`
+- Cross-platform CI — GitHub Actions now runs build, lint, type check, and tests on macOS, Windows, and Linux
+
+### Fixed
+
+- Windows workspace path encoding — `encodeWorkspacePath()` now replaces backslashes (`\`) and drive letter colons (`:`) so that project directories like `C:\Users\dev\project` are matched correctly on disk
+
 ## [1.1.4]
 
 ### Added
