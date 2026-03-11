@@ -206,13 +206,13 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     return filePath.includes(`${path.sep}${encodedExcluded}${path.sep}`);
   }
 
-  /** BUG2: Check whether a JSONL file belongs to one of the current workspace's
+  /** BUG2: Check whether a JSONL file belongs to one of the effective workspace's
    *  project directories. When no workspace is open, allow all files (fallback). */
   private isFromCurrentWorkspace(filePath: string): boolean {
-    const workspaceFolders = this._platform.getWorkspaceFolders();
-    if (!workspaceFolders || workspaceFolders.length === 0) return true; // fallback: no workspace → allow all
+    const effectiveFolders = this.getEffectiveWorkspaceFolders();
+    if (!effectiveFolders || effectiveFolders.length === 0) return true; // fallback: no workspace → allow all
 
-    for (const folder of workspaceFolders) {
+    for (const folder of effectiveFolders) {
       if (this._excludedWorkspacePath && folder === this._excludedWorkspacePath) continue;
       const encodedPath = this.encodeWorkspacePath(folder);
       if (filePath.includes(`${path.sep}${encodedPath}${path.sep}`)) return true;
@@ -263,6 +263,25 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     return conversations;
   }
 
+  /**
+   * Resolve the effective workspace folders based on the monitoredWorkspace setting.
+   * Returns null when auto mode has no workspace open (scan-all fallback).
+   */
+  private getEffectiveWorkspaceFolders(): string[] | null {
+    const monitored = this._platform.getConfig<{ mode: string; path?: string; paths?: string[] }>(
+      'monitoredWorkspace', { mode: 'auto' }
+    );
+
+    if (monitored.mode === 'single' && monitored.path) {
+      return [monitored.path];
+    }
+    if (monitored.mode === 'multi' && monitored.paths && monitored.paths.length > 0) {
+      return monitored.paths;
+    }
+    // Auto mode: delegate to platform
+    return this._platform.getWorkspaceFolders();
+  }
+
   private getProjectDirsToScan(projectsPath: string): string[] {
     const dirs: string[] = [];
 
@@ -272,11 +291,11 @@ export class ClaudeCodeWatcher implements IConversationProvider {
         return dirs;
       }
 
-      const workspaceFolders = this._platform.getWorkspaceFolders();
+      const effectiveFolders = this.getEffectiveWorkspaceFolders();
 
-      if (workspaceFolders && workspaceFolders.length > 0) {
-        // Only scan project directories that match the current workspace
-        for (const folder of workspaceFolders) {
+      if (effectiveFolders && effectiveFolders.length > 0) {
+        // Only scan project directories that match the effective folders
+        for (const folder of effectiveFolders) {
           // Skip the extension's own workspace when running in EDH
           if (this._excludedWorkspacePath && folder === this._excludedWorkspacePath) {
             console.log(`Claudine: Skipping extension dev workspace: ${folder}`);
@@ -296,7 +315,7 @@ export class ClaudeCodeWatcher implements IConversationProvider {
           }
         }
       } else {
-        // No workspace open — scan all projects as fallback
+        // No workspace open & auto mode — scan all projects as fallback
         console.log('Claudine: No workspace folders, scanning all projects');
         const entries = fs.readdirSync(projectsPath, { withFileTypes: true });
         for (const entry of entries) {
