@@ -553,4 +553,100 @@ describe('ConversationParser', () => {
       expect(result!.lastMessage).toContain('Dark mode is now available');
     });
   });
+
+  describe('worktree detection', () => {
+    it('extracts worktree name from worktree-state entry', async () => {
+      const content = [
+        fixtures.userMessage('Do some work', 10),
+        JSON.stringify({
+          type: 'worktree-state',
+          uuid: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          sessionId: 'test-session',
+          parentUuid: null,
+          isSidechain: false,
+          worktreeSession: { worktreeName: 'my-feature-branch' },
+        }),
+        fixtures.assistantMessage('Done', 9),
+      ].join('\n');
+      const result = await parseContent(content);
+      expect(result).not.toBeNull();
+      expect(result!.worktreeName).toBe('my-feature-branch');
+    });
+
+    it('returns undefined worktree when no worktree-state entry', async () => {
+      const result = await parseContent(fixtures.completedConversation);
+      expect(result).not.toBeNull();
+      expect(result!.worktreeName).toBeUndefined();
+    });
+
+    it('handles null worktreeSession without crashing', async () => {
+      const content = [
+        fixtures.userMessage('Do some work', 10),
+        JSON.stringify({
+          type: 'worktree-state',
+          uuid: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          sessionId: 'test-session',
+          parentUuid: null,
+          isSidechain: false,
+          worktreeSession: null,
+        }),
+        fixtures.assistantMessage('Done', 9),
+      ].join('\n');
+      const result = await parseContent(content);
+      expect(result).not.toBeNull();
+      expect(result!.worktreeName).toBeUndefined();
+    });
+
+    it('extracts worktree name from a worktree workspace path (Unix)', () => {
+      const extractWorktree = (p: string) =>
+        (parser as any).extractWorktreeFromWorkspacePath(p);
+      expect(extractWorktree('/Users/alice/project/.claude/worktrees/feat-foo')).toBe('feat-foo');
+    });
+
+    it('extracts worktree name from a worktree workspace path (Windows)', () => {
+      const extractWorktree = (p: string) =>
+        (parser as any).extractWorktreeFromWorkspacePath(p);
+      expect(extractWorktree('C:\\Users\\alice\\project\\.claude\\worktrees\\feat-foo')).toBe('feat-foo');
+    });
+
+    it('returns undefined for non-worktree workspace path', () => {
+      const extractWorktree = (p: string) =>
+        (parser as any).extractWorktreeFromWorkspacePath(p);
+      expect(extractWorktree('/Users/alice/project')).toBeUndefined();
+    });
+  });
+
+  describe('message content normalization', () => {
+    it('parses string content (collapsed text format)', async () => {
+      const content = JSON.stringify({
+        type: 'user',
+        uuid: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        sessionId: 'test-session',
+        parentUuid: null,
+        isSidechain: false,
+        message: { role: 'user', content: 'Plain string content' },
+      });
+      const result = await parseContent(content);
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('Plain string content');
+    });
+
+    it('parses single content block (non-array format)', async () => {
+      const content = JSON.stringify({
+        type: 'user',
+        uuid: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        sessionId: 'test-session',
+        parentUuid: null,
+        isSidechain: false,
+        message: { role: 'user', content: { type: 'text', text: 'Single block content' } },
+      });
+      const result = await parseContent(content);
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('Single block content');
+    });
+  });
 });

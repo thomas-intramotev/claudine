@@ -37,6 +37,7 @@ interface ParseCache {
   firstTimestamp: string | undefined;
   lastTimestamp: string | undefined;
   gitBranch: string | undefined;
+  worktreeName: string | undefined;
 }
 
 export class ConversationParser {
@@ -94,7 +95,7 @@ export class ConversationParser {
         // No new data — promote in LRU and rebuild from cached messages
         this.touchCache(filePath, cached);
         if (cached.messages.length === 0) return null;
-        return await this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch, cached.sidechainSteps);
+        return await this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch, cached.worktreeName, cached.sidechainSteps);
       }
 
       if (cached && cached.byteOffset < fileSize) {
@@ -124,13 +125,14 @@ export class ConversationParser {
       firstTimestamp: undefined,
       lastTimestamp: undefined,
       gitBranch: undefined,
+      worktreeName: undefined,
     };
 
     this.parseLines(content, cache);
     this.touchCache(filePath, cache);
 
     if (cache.messages.length === 0) return null;
-    return await this.buildConversation(filePath, cache.messages, cache.firstTimestamp, cache.lastTimestamp, cache.gitBranch, cache.sidechainSteps);
+    return await this.buildConversation(filePath, cache.messages, cache.firstTimestamp, cache.lastTimestamp, cache.gitBranch, cache.worktreeName, cache.sidechainSteps);
   }
 
   private async parseIncremental(filePath: string, cached: ParseCache, fileSize: number): Promise<Conversation | null> {
@@ -149,7 +151,7 @@ export class ConversationParser {
     }
 
     if (cached.messages.length === 0) return null;
-    return await this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch, cached.sidechainSteps);
+    return await this.buildConversation(filePath, cached.messages, cached.firstTimestamp, cached.lastTimestamp, cached.gitBranch, cached.worktreeName, cached.sidechainSteps);
   }
 
   /** Parse raw JSONL lines and accumulate results into the cache. */
@@ -170,6 +172,10 @@ export class ConversationParser {
 
         if (entry.gitBranch && entry.gitBranch !== 'HEAD') {
           cache.gitBranch = entry.gitBranch;
+        }
+
+        if (entry.type === 'worktree-state' && entry.worktreeSession) {
+          cache.worktreeName = entry.worktreeSession.worktreeName;
         }
 
         if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message) {
@@ -256,13 +262,35 @@ export class ConversationParser {
     cache.sidechainSteps = Array.from(cache.sidechainAgentStatus.values());
   }
 
+  /** Claude Code will sometimes collapse 'text' type content into a single string,
+   *  or return a single content block instead of an array -- normalize these into
+   *  array of ClaudeCodeContent
+   */
+  private parseMessageContent(content: any): ClaudeCodeContent[] {
+    function _parse(c: any): ClaudeCodeContent | null {
+      if (typeof c === 'string') {
+        return { type: 'text', text: c } as ClaudeCodeContent;
+      }
+      else if (c && "type" in c && typeof c.type === 'string') {
+        return c as ClaudeCodeContent;
+      }
+      console.warn('Claudine: Unrecognized content block format:', c);
+      return null;
+    }
+
+    if (!Array.isArray(content)) content = [content];
+    return content
+      .map(_parse)
+      .filter((c: ClaudeCodeContent | null): c is ClaudeCodeContent => c !== null);
+  }
+
   private parseMessage(entry: ClaudeCodeJsonlEntry): ParsedMessage | null {
     if (!entry.message) return null;
 
     const role = entry.message.role;
     if (role !== 'user' && role !== 'assistant') return null;
 
-    const contentBlocks: ClaudeCodeContent[] = entry.message.content || [];
+    const contentBlocks = this.parseMessageContent(entry.message.content);
 
     const textParts: string[] = [];
     const toolUses: Array<{ name: string; input: Record<string, unknown> }> = [];
@@ -417,6 +445,7 @@ export class ConversationParser {
     firstTimestamp: string | undefined,
     lastTimestamp: string | undefined,
     gitBranch: string | undefined,
+    worktreeName: string | undefined,
     sidechainSteps: SidechainStep[] = []
   ): Promise<Conversation | null> {
     const id = this.extractSessionId(filePath);
@@ -444,6 +473,7 @@ export class ConversationParser {
 
     const createdAt = firstTimestamp ? new Date(firstTimestamp) : new Date();
     const updatedAt = lastTimestamp ? new Date(lastTimestamp) : new Date();
+    const workspacePath = await this.extractWorkspacePath(filePath);
 
     return {
       id,
@@ -468,7 +498,8 @@ export class ConversationParser {
       createdAt,
       updatedAt,
       filePath,
-      workspacePath: await this.extractWorkspacePath(filePath),
+      workspacePath,
+      worktreeName: worktreeName || this.extractWorktreeFromWorkspacePath(workspacePath),
       provider: 'claude-code'
     };
   }
@@ -933,6 +964,14 @@ export class ConversationParser {
       if (match) return match[1];
     }
     return undefined;
+  }
+
+  /** Extract a worktree name from a reconstructed workspace path.
+   *  Matches paths ending in `.claude/worktrees/<name>` (cross-platform). */
+  private extractWorktreeFromWorkspacePath(workspacePath: string | undefined): string | undefined {
+    if (!workspacePath) return undefined;
+    const match = workspacePath.replace(/\\/g, '/').match(/\/\.claude\/worktrees\/([^/]+)$/);
+    return match?.[1];
   }
 
   private static readonly IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg)$/i;
