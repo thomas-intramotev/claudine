@@ -43,6 +43,8 @@ function createMockPlatform(): IPlatformAdapter {
     setSecret: async () => {},
     getGlobalStoragePath: () => '/tmp/claudine-test',
     getWorkspaceFolders: () => null,
+    getWorkspaceLocalConfig: (_k: string, d: unknown) => d as never,
+    setWorkspaceLocalConfig: async () => {},
     isDevelopmentMode: () => false,
     getExtensionPath: () => undefined,
   };
@@ -429,6 +431,58 @@ describe('ClaudeCodeWatcher — regression tests', () => {
       expect(sm.setConversations).toHaveBeenCalledTimes(1);
       const convs = sm.setConversations.mock.calls[0][0] as Conversation[];
       expect(convs.length).toBe(1);
+    });
+
+    it('assigns worktree metadata to conversations from monitored Claude worktrees', async () => {
+      const workspace = '/Users/alice/projectA';
+      const worktreesDir = path.join(workspace, '.claude', 'worktrees');
+      const worktreePath = path.join(worktreesDir, 'feature-login');
+      const encodedDir = '-Users-alice-projectA--claude-worktrees-feature-login';
+
+      const platform = createMockPlatform();
+      platform.getWorkspaceFolders = () => [workspace];
+      platform.getConfig = ((key: string, defaultValue: unknown) => {
+        if (key === 'monitorWorktrees') return true as never;
+        return defaultValue as never;
+      }) as typeof platform.getConfig;
+
+      const sm = createMockStateManager();
+      const w = new ClaudeCodeWatcher(sm as never, platform);
+
+      mockExistsSync.mockImplementation(((p: string) => {
+        if (p === projectsPath) return true;
+        if (p === worktreesDir) return true;
+        if (typeof p === 'string' && p.includes(encodedDir)) return true;
+        return false;
+      }) as typeof fs.existsSync);
+
+      mockReaddirSync.mockImplementation(((dirPath: string) => {
+        if (dirPath === worktreesDir) {
+          return [{ name: 'feature-login', isDirectory: () => true, isFile: () => false }];
+        }
+        if (typeof dirPath === 'string' && dirPath.includes(encodedDir)) {
+          return [{ name: 'conv-worktree.jsonl', isDirectory: () => false, isFile: () => true }];
+        }
+        return [];
+      }) as unknown as typeof fs.readdirSync);
+
+      const ts = new Date().toISOString();
+      const jsonl = JSON.stringify({
+        type: 'user', uuid: '1', timestamp: ts, sessionId: 's',
+        parentUuid: null, isSidechain: false,
+        message: { role: 'user', content: [{ type: 'text', text: 'Hello from worktree' }] },
+      });
+      const bytes = Buffer.byteLength(jsonl, 'utf-8');
+      mockStat.mockResolvedValue({ size: bytes } as any);
+      mockReadFile.mockResolvedValue(jsonl);
+
+      await w.refresh();
+
+      expect(sm.setConversations).toHaveBeenCalledTimes(1);
+      const convs = sm.setConversations.mock.calls[0][0] as Conversation[];
+      expect(convs).toHaveLength(1);
+      expect(convs[0].workspacePath).toBe(worktreePath);
+      expect((convs[0] as any).worktreeName).toBe('feature-login');
     });
   });
 

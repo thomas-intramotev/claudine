@@ -55,10 +55,14 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       // Open the editor without the follow-up focus call — the restored tab
       // flow closes the old webview first, so calling claude-vscode.focus
       // before the new webview is ready would hit a disposed webview.
+      // BUG14c: Suppress focus detection so the replacement tab doesn't
+      // trigger another detection cascade before it is mapped.
+      this._tabManager.suppressFocus(FOCUS_SUPPRESS_DURATION_MS);
       const conv = this._stateManager.getConversation(id);
       const commands = this._getEditorCommands(conv?.provider);
       const ok = await commands.openConversation(id);
-      if (ok) {
+      // BUG24: Only record tab mapping for tab-based providers (not Codex sidebar)
+      if (ok && conv?.provider !== 'codex') {
         setTimeout(() => this._tabManager.recordActiveTabMapping(id), TAB_MAPPING_DELAY_MS);
       }
     };
@@ -110,6 +114,8 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
         if (webviewView.visible) {
           this.refresh();
           this.resumeArchiveTimer();
+          // BUG22: Re-sync focused conversation when sidebar becomes visible
+          this._tabManager.detectFocusedConversation();
         } else {
           this.syncArchiveTimerWithVisibility();
         }
@@ -121,6 +127,12 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       this._disposables.push(
         vscode.window.tabGroups.onDidChangeTabs(() => {
           this._tabManager.pruneStaleTabMappings();
+          this._tabManager.scheduleFocusDetection();
+        }),
+        // BUG22: onDidChangeTabGroups fires when a group's activeTab changes
+        // (clicking a different tab), which onDidChangeTabs may not cover
+        // reliably in all VS Code versions.
+        vscode.window.tabGroups.onDidChangeTabGroups(() => {
           this._tabManager.scheduleFocusDetection();
         }),
         vscode.window.onDidChangeActiveTextEditor(() => {
@@ -180,9 +192,10 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
         const current = cfg.get<boolean>('enableSummarization', false);
         cfg.update('enableSummarization', !current, vscode.ConfigurationTarget.Global).then(() => {
           this.updateSettings();
-          if (!current) {
-            this._provider.refresh();
-          }
+          // BUG8b: Always refresh — when turning ON this kicks off summarization,
+          // when turning OFF this re-sends conversations so the webview can revert
+          // to original titles (applyCached still sets originalTitle from cache).
+          this._provider.refresh();
         });
         break;
       }
@@ -196,17 +209,22 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
           'showTaskDescription',
           'showTaskLatest',
           'showTaskGitBranch',
-          'monitoredWorkspace'
+          'monitorWorktrees',
         ];
         if (message.key === 'imageGenerationApiKey') {
           this._secrets?.store('imageGenerationApiKey', String(message.value ?? '')).then(() => {
             this.updateSettings();
           });
+        } else if (message.key === 'monitoredWorkspace') {
+          this._provider.setWorkspaceLocalConfig?.('monitoredWorkspace', message.value)?.then(() => {
+            this.updateSettings();
+            this._provider.refresh();
+          });
         } else if (ALLOWED_SETTING_KEYS.includes(message.key)) {
           const config = vscode.workspace.getConfiguration('claudine');
           config.update(message.key, message.value, vscode.ConfigurationTarget.Global).then(() => {
             this.updateSettings();
-            if (message.key === 'monitoredWorkspace') {
+            if (message.key === 'monitorWorktrees') {
               this._provider.refresh();
             }
           });
@@ -304,25 +322,34 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
     this.sendMessage({ type: 'focusedConversation', conversationId });
     this._tabManager.suppressFocus(FOCUS_SUPPRESS_DURATION_MS);
 
-    // Check if we already have a known tab for this conversation
-    const knownLabel = this._tabManager.getTabLabel(conversationId);
-    if (knownLabel) {
-      const focused = await this._tabManager.focusTabByLabel(knownLabel);
-      if (focused) {
-        console.log(`Claudine: Focused existing tab "${knownLabel}" for conversation ${conversationId}`);
-        return;
-      }
-      this._tabManager.removeMapping(conversationId);
-    }
+    // BUG24: Tab mapping/caching only applies to providers that use VS Code
+    // editor tabs (Claude Code). Codex opens a sidebar panel — mapping it to
+    // a Claude Code tab causes non-deterministic wrong-tab focus on next click.
+    const isTabBasedProvider = conversation.provider !== 'codex';
 
-    // No known tab — create one via the provider's editor integration
-    await this._tabManager.closeUnmappedClaudeTabByTitle(conversation.title);
+    if (isTabBasedProvider) {
+      // Check if we already have a known tab for this conversation
+      const knownLabel = this._tabManager.getTabLabel(conversationId);
+      if (knownLabel) {
+        const focused = await this._tabManager.focusTabByLabel(knownLabel);
+        if (focused) {
+          console.log(`Claudine: Focused existing tab "${knownLabel}" for conversation ${conversationId}`);
+          return;
+        }
+        this._tabManager.removeMapping(conversationId);
+      }
+
+      // No known tab — close any stale restored tab with the same title
+      await this._tabManager.closeUnmappedClaudeTabByTitle(conversation.title);
+    }
 
     const commands = this._getEditorCommands(conversation.provider);
     const ok = await commands.openConversation(conversationId);
     if (ok) {
-      this.focusEditorOnce(EDITOR_FOCUS_DELAY_MS);
-      setTimeout(() => this._tabManager.recordActiveTabMapping(conversationId), TAB_MAPPING_DELAY_MS);
+      if (isTabBasedProvider) {
+        this.focusEditorOnce(EDITOR_FOCUS_DELAY_MS, commands);
+        setTimeout(() => this._tabManager.recordActiveTabMapping(conversationId), TAB_MAPPING_DELAY_MS);
+      }
     } else {
       this._tabManager.suppressFocus(0);
       vscode.window.showWarningMessage(
@@ -341,15 +368,22 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
     this.sendMessage({ type: 'focusedConversation', conversationId });
     this._tabManager.suppressFocus(FOCUS_SUPPRESS_DURATION_MS);
 
-    const knownLabel = this._tabManager.getTabLabel(conversationId);
-    if (knownLabel) {
-      await this._tabManager.focusTabByLabel(knownLabel);
+    // BUG24: Only use tab mapping for tab-based providers (not Codex sidebar)
+    const isTabBasedProvider = conversation.provider !== 'codex';
+
+    if (isTabBasedProvider) {
+      const knownLabel = this._tabManager.getTabLabel(conversationId);
+      if (knownLabel) {
+        await this._tabManager.focusTabByLabel(knownLabel);
+      }
     }
 
     const commands = this._getEditorCommands(conversation.provider);
     const ok = await commands.sendPrompt(conversationId, prompt);
     if (ok) {
-      setTimeout(() => this._tabManager.recordActiveTabMapping(conversationId), TAB_MAPPING_DELAY_MS);
+      if (isTabBasedProvider) {
+        setTimeout(() => this._tabManager.recordActiveTabMapping(conversationId), TAB_MAPPING_DELAY_MS);
+      }
     } else {
       this._tabManager.suppressFocus(0);
       vscode.window.showWarningMessage(
@@ -377,10 +411,13 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
     this._getEditorCommands(conversation.provider).interruptTerminals();
   }
 
-  private focusEditorOnce(delay: number) {
+  // BUG23c: Accept provider-specific commands so we don't accidentally
+  // fire claude-vscode.focus when opening a Codex conversation.
+  private focusEditorOnce(delay: number, commands?: IEditorCommands) {
     clearTimeout(this._focusEditorTimer);
+    const target = commands ?? this._editorCommands;
     this._focusEditorTimer = setTimeout(async () => {
-      await this._editorCommands.focusEditor();
+      await target.focusEditor();
     }, delay);
   }
 
@@ -591,8 +628,10 @@ export class KanbanViewProvider implements vscode.WebviewViewProvider {
       showTaskDescription: config.get('showTaskDescription', true),
       showTaskLatest: config.get('showTaskLatest', true),
       showTaskGitBranch: config.get('showTaskGitBranch', true),
+      monitorWorktrees: config.get('monitorWorktrees', true),
       monitoredWorkspace: (() => {
-        const raw = config.get<MonitoredWorkspace>('monitoredWorkspace', { mode: 'auto' });
+        const raw = this._provider.getWorkspaceLocalConfig?.<MonitoredWorkspace>('monitoredWorkspace', { mode: 'auto' })
+          ?? { mode: 'auto' as const };
         return (raw && typeof raw === 'object' && 'mode' in raw)
           ? raw as MonitoredWorkspace
           : { mode: 'auto' as const };

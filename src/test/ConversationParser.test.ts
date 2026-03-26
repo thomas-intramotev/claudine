@@ -325,6 +325,27 @@ describe('ConversationParser', () => {
       expect(result).not.toBeNull();
       expect(result!.isRateLimited).toBe(false);
     });
+
+    // BUG7b: rate limit message without a timestamp should not be flagged
+    it('does not flag rate limits from messages with no timestamp', async () => {
+      const result = await parseContent(fixtures.rateLimitNoTimestampConversation);
+      expect(result).not.toBeNull();
+      expect(result!.isRateLimited).toBe(false);
+    });
+
+    // BUG7b: long discussion quoting the rate limit pattern should not trigger
+    it('does not flag rate limit text embedded in a discussion', async () => {
+      const result = await parseContent(fixtures.rateLimitDiscussionConversation);
+      expect(result).not.toBeNull();
+      expect(result!.isRateLimited).toBe(false);
+    });
+
+    // BUG7b: no timestamp + invalid timezone = no parseable data → not rate limited
+    it('does not flag rate limits with no timestamp and invalid timezone', async () => {
+      const result = await parseContent(fixtures.rateLimitNoDataConversation);
+      expect(result).not.toBeNull();
+      expect(result!.isRateLimited).toBe(false);
+    });
   });
 
   describe('parseResetTime', () => {

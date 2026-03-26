@@ -70,6 +70,19 @@ export interface IPlatformAdapter {
    */
   setConfig<T>(key: string, value: T): Promise<void>;
 
+  /**
+   * Read a per-workspace configuration value from `.claudine/workspace-settings.json`
+   * in the first workspace folder root. Falls back to defaultValue when the file
+   * doesn't exist or the key is missing.
+   */
+  getWorkspaceLocalConfig<T>(key: string, defaultValue: T): T;
+
+  /**
+   * Write a per-workspace configuration value to `.claudine/workspace-settings.json`
+   * in the first workspace folder root. The `.claudine/` directory is gitignored.
+   */
+  setWorkspaceLocalConfig<T>(key: string, value: T): Promise<void>;
+
   // ── File system ──────────────────────────────────────────────────
 
   /** Ensure a directory exists (create recursively if needed). */

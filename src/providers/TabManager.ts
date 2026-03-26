@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { StateManager } from '../services/StateManager';
-import { FOCUS_DETECTION_DEBOUNCE_MS, REPLACEMENT_GUARD_TIMEOUT_MS } from '../constants';
+import { FOCUS_DETECTION_DEBOUNCE_MS, FOCUS_SUPPRESS_DURATION_MS, REPLACEMENT_GUARD_TIMEOUT_MS } from '../constants';
 
 /**
  * Manages the bidirectional mapping between Claude Code editor tabs and
@@ -17,6 +17,12 @@ export class TabManager {
   private _suppressFocusUntil = 0;
   private _replacingStaleTab = false;
   private _replacingStaleTabTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // BUG14c: Track whether restored-tab replacement has already been attempted.
+  // This mechanism should only fire ONCE per session (on VS Code startup when
+  // shell tabs are restored). After that, any new unmapped tabs are user-opened
+  // conversations — not restored shells.
+  private _restoredTabReplacementDone = false;
 
   private _onFocusChanged: (conversationId: string | null) => void = () => {};
 
@@ -255,9 +261,14 @@ export class TabManager {
       focusedId = this.matchTabToConversation(claudeTab);
 
       // Unmapped tab in a fresh session → restored shell. Replace it.
-      if (focusedId && !isMapped && this._tabToConversation.size === 0 && !this._replacingStaleTab) {
+      // BUG14c: Only attempt this ONCE per session. After the first detection
+      // pass (triggered by the webview 'ready' message), all subsequent unmapped
+      // tabs are user-opened conversations, not VS Code restored shells.
+      if (focusedId && !isMapped && this._tabToConversation.size === 0
+          && !this._replacingStaleTab && !this._restoredTabReplacementDone) {
         console.log(`Claudine: Replacing restored shell tab "${claudeTab.label}"`);
         this._replacingStaleTab = true;
+        this._restoredTabReplacementDone = true;
         this.replaceRestoredTab(claudeTab, focusedId);
         return;
       }
@@ -276,6 +287,10 @@ export class TabManager {
       }
     }
 
+    // BUG14c: After the first detection pass, mark restored-tab replacement as
+    // done so it never triggers on subsequently opened tabs.
+    this._restoredTabReplacementDone = true;
+
     this._onFocusChanged(focusedId);
   }
 
@@ -292,7 +307,11 @@ export class TabManager {
     const mapped = this._tabToConversation.get(tab.label);
     if (mapped) return mapped;
 
-    const conversations = this._stateManager.getConversations();
+    // BUG24: Only match against tab-based providers (Claude Code). Codex uses
+    // a sidebar panel, not editor tabs — matching a Claude Code tab to a Codex
+    // conversation by title causes focus detection to report the wrong conversation.
+    const conversations = this._stateManager.getConversations()
+      .filter(c => c.provider !== 'codex');
     const tabLabel = tab.label.toLowerCase().trim();
 
     for (const conv of conversations) {
@@ -320,7 +339,10 @@ export class TabManager {
     // BUG14: Suppress focus detection during the replacement window to prevent
     // event-listener cascades where onDidChangeTabs → detectFocusedConversation
     // would re-enter this method before the new tab is mapped.
-    this.suppressFocus(FOCUS_DETECTION_DEBOUNCE_MS * 3);
+    // BUG14c: Use FOCUS_SUPPRESS_DURATION_MS (2 s) — the previous value
+    // (FOCUS_DETECTION_DEBOUNCE_MS * 3 = 450 ms) was shorter than the
+    // TAB_MAPPING_DELAY_MS (500 ms), leaving a gap for re-entry.
+    this.suppressFocus(FOCUS_SUPPRESS_DURATION_MS);
 
     try {
       await vscode.window.tabGroups.close(staleTab);

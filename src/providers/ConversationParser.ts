@@ -278,14 +278,21 @@ export class ConversationParser {
     for (const block of contentBlocks) {
       if (block.type === 'text' && block.text) {
         textParts.push(block.text);
-        // Detect rate limit message in assistant text
-        const rlMatch = block.text.match(RATE_LIMIT_PATTERN);
+        // Detect rate limit message in assistant text.
+        // BUG7b: only flag SHORT text blocks (<200 chars) to avoid matching
+        // longer discussions that quote the rate limit message format.
+        const rlMatch = block.text.length < 200 ? block.text.match(RATE_LIMIT_PATTERN) : null;
         if (rlMatch) {
           isRateLimited = true;
           const timeStr = rlMatch[1]; // e.g. "10am"
           const tz = rlMatch[2];      // e.g. "Europe/Zurich"
           rateLimitResetDisplay = `${timeStr} (${tz})`;
-          rateLimitResetTime = ConversationParser.parseResetTime(timeStr, tz, messageDate);
+          // BUG7b: only compute reset time when we have a real message timestamp
+          // to anchor to. Without it, parseResetTime falls back to new Date()
+          // which creates a perpetually-future reset time on every restart.
+          rateLimitResetTime = messageDate
+            ? ConversationParser.parseResetTime(timeStr, tz, messageDate)
+            : undefined;
         }
       } else if (block.type === 'tool_use' && block.name) {
         toolUses.push({
@@ -325,7 +332,9 @@ export class ConversationParser {
           const timeStr = rlMatch[1];
           const tz = rlMatch[2];
           rateLimitResetDisplay = `${timeStr} (${tz})`;
-          rateLimitResetTime = ConversationParser.parseResetTime(timeStr, tz, messageDate);
+          rateLimitResetTime = messageDate
+            ? ConversationParser.parseResetTime(timeStr, tz, messageDate)
+            : undefined;
         }
       }
     }
@@ -531,8 +540,16 @@ export class ConversationParser {
       return 'needs-input';
     }
 
-    // Rate-limited conversations are paused — mark as needs-input
-    if (recentMessages.some(m => m.isRateLimited)) {
+    // Rate-limited conversations are paused — mark as needs-input.
+    // BUG7b: use time-aware check (same as hasRecentRateLimit) to avoid
+    // marking conversations with expired rate limits as needs-input.
+    const now = Date.now();
+    if (recentMessages.some(m => {
+      if (!m.isRateLimited) return false;
+      if (m.rateLimitResetTime) return new Date(m.rateLimitResetTime).getTime() > now;
+      if (m.timestamp) return (now - new Date(m.timestamp).getTime()) < 6 * 60 * 60 * 1000;
+      return false;
+    })) {
       return 'needs-input';
     }
 
@@ -693,7 +710,10 @@ export class ConversationParser {
     if (lastUserIdx === -1) return false;
 
     const now = Date.now();
-    // BUG7: a rate limit is only active if its reset time is still in the future
+    // BUG7/BUG7b: a rate limit is only active if its reset time is still in the future.
+    // When we lack both a parseable reset time AND a message timestamp we cannot
+    // determine whether the limit has expired → err on the side of "not active"
+    // to avoid perpetual false positives (BUG7b fix #4).
     return messages.slice(lastUserIdx).some(m => {
       if (!m.isRateLimited) return false;
       if (m.rateLimitResetTime) {
@@ -703,7 +723,8 @@ export class ConversationParser {
       if (m.timestamp) {
         return (now - new Date(m.timestamp).getTime()) < 6 * 60 * 60 * 1000;
       }
-      return true;
+      // BUG7b: no timestamp + no reset time → cannot determine state → not active
+      return false;
     });
   }
 

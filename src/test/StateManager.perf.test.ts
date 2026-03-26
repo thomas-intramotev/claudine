@@ -40,6 +40,8 @@ function createMockPlatform(): IPlatformAdapter {
     setSecret: async () => {},
     getGlobalStoragePath: () => '/tmp/claudine-test',
     getWorkspaceFolders: () => null,
+    getWorkspaceLocalConfig: (_k: string, d: unknown) => d as never,
+    setWorkspaceLocalConfig: async () => {},
     isDevelopmentMode: () => false,
     getExtensionPath: () => undefined,
   };

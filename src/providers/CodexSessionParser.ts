@@ -400,10 +400,11 @@ export class CodexSessionParser {
       return 'in-review';
     }
 
-    // Only user messages → todo
-    if (cache.userMessages.length > 0) return 'todo';
-
-    return 'todo';
+    // BUG23: Codex sessions are file-based — by the time we detect the JSONL
+    // file, the conversation has already been submitted and is running. Unlike
+    // Claude Code where "to do" is meaningful (draft ideas), Codex sessions
+    // should never appear in "To Do".
+    return 'in-progress';
   }
 
   private buildAgents(cache: ParseCache): Agent[] {

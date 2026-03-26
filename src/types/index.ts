@@ -59,6 +59,8 @@ export interface Conversation {
   updatedAt: Date;
   filePath?: string;
   workspacePath?: string;
+  /** Claude Code worktree name, when the conversation belongs to a managed worktree. */
+  worktreeName?: string;
   /** Which conversation provider produced this conversation (e.g. 'claude-code'). */
   provider?: string;
 }
@@ -113,7 +115,7 @@ export type ExtensionToWebviewMessage =
   | { type: 'projectConversationsLoaded'; projectPath: string; conversations: Conversation[] }
   | { type: 'folderSelected'; path: string };
 
-export type OpenConversationTarget = 'terminal' | 'vscode';
+export type OpenConversationTarget = 'terminal' | 'vscode' | 'cursor' | 'codex-vscode' | 'codex-cursor';
 
 export type WebviewToExtensionMessage =
   | { type: 'sendPrompt'; conversationId: string; prompt: string }
@@ -157,6 +159,7 @@ export interface ClaudineSettings {
   showTaskDescription: boolean;
   showTaskLatest: boolean;
   showTaskGitBranch: boolean;
+  monitorWorktrees: boolean;
   monitoredWorkspace: MonitoredWorkspace;
   detectedWorkspacePaths: string[];
 }

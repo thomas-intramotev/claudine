@@ -21,10 +21,15 @@ function createMockPlatform(overrides: Record<string, unknown> = {}) {
     getWorkspaceFolders: vi.fn(() => overrides.workspaceFolders ?? null),
     getConfig: vi.fn((key: string, defaultValue: unknown) => {
       if (key === 'claudeCodePath') return '/tmp/test-claude';
-      if (key === 'monitoredWorkspace') return overrides.monitoredWorkspace ?? { mode: 'auto' };
+      if (key === 'monitorWorktrees') return overrides.monitorWorktrees ?? true;
       return defaultValue;
     }),
     setConfig: vi.fn(),
+    getWorkspaceLocalConfig: vi.fn((key: string, defaultValue: unknown) => {
+      if (key === 'monitoredWorkspace') return overrides.monitoredWorkspace ?? { mode: 'auto' };
+      return defaultValue;
+    }),
+    setWorkspaceLocalConfig: vi.fn(),
     watchFiles: vi.fn(() => ({ dispose: vi.fn() })),
     isDevelopmentMode: vi.fn(() => false),
     getExtensionPath: vi.fn(() => undefined),
@@ -51,6 +56,12 @@ function createMockStateManager() {
 
 const claudeDir = '/tmp/test-claude';
 const projectsDir = path.join(claudeDir, 'projects');
+const projectAPath = '/Users/alice/projectA';
+const projectBPath = '/Users/alice/projectB';
+const projectAEncoded = '-Users-alice-projectA';
+const projectBEncoded = '-Users-alice-projectB';
+const projectAWorktreesDir = path.join(projectAPath, '.claude', 'worktrees');
+const projectAWorktreeEncoded = '-Users-alice-projectA--claude-worktrees-feature-login';
 
 describe('MonitoredWorkspace — getProjectDirsToScan', () => {
   beforeEach(() => {
@@ -58,29 +69,37 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
       const s = String(p);
       if (s === projectsDir) return true;
       if (s.startsWith(projectsDir)) return true;
+      if (s === projectAWorktreesDir) return true;
       return false;
     });
     vi.mocked(fs.readdirSync).mockImplementation(((p: string) => {
       if (p === projectsDir) {
         return [
-          { name: '-Users-alice-projectA', isDirectory: () => true, isFile: () => false },
-          { name: '-Users-alice-projectB', isDirectory: () => true, isFile: () => false },
+          { name: projectAEncoded, isDirectory: () => true, isFile: () => false },
+          { name: projectBEncoded, isDirectory: () => true, isFile: () => false },
           { name: '-tmp-scratch', isDirectory: () => true, isFile: () => false },
+          { name: projectAWorktreeEncoded, isDirectory: () => true, isFile: () => false },
+        ];
+      }
+      if (p === projectAWorktreesDir) {
+        return [
+          { name: 'feature-login', isDirectory: () => true, isFile: () => false },
         ];
       }
       return [];
     }) as unknown as typeof fs.readdirSync);
   });
 
-  it('auto mode with workspace folders scans only matching dirs', () => {
+  it('auto mode with workspace folders scans the workspace and its Claude worktrees', () => {
     const platform = createMockPlatform({
-      workspaceFolders: ['/Users/alice/projectA'],
+      workspaceFolders: [projectAPath],
       monitoredWorkspace: { mode: 'auto' },
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
-    expect(dirs).toHaveLength(1);
-    expect(dirs[0]).toContain('-Users-alice-projectA');
+    expect(dirs).toHaveLength(2);
+    expect(dirs).toContain(path.join(projectsDir, projectAEncoded));
+    expect(dirs).toContain(path.join(projectsDir, projectAWorktreeEncoded));
   });
 
   it('auto mode without workspace folders scans all (excluding temp)', () => {
@@ -90,31 +109,32 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
-    // Should include projectA and projectB, but exclude -tmp-scratch
-    expect(dirs).toHaveLength(2);
+    // Should include projectA, projectB, and the worktree dir, but exclude -tmp-scratch
+    expect(dirs).toHaveLength(3);
   });
 
   it('single mode uses configured path instead of workspace folders', () => {
     const platform = createMockPlatform({
-      workspaceFolders: ['/Users/alice/projectA'],
-      monitoredWorkspace: { mode: 'single', path: '/Users/alice/projectB' },
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'single', path: projectBPath },
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
     expect(dirs).toHaveLength(1);
-    expect(dirs[0]).toContain('-Users-alice-projectB');
+    expect(dirs[0]).toContain(projectBEncoded);
   });
 
   it('multi mode uses all configured paths', () => {
     const platform = createMockPlatform({
       workspaceFolders: null,
-      monitoredWorkspace: { mode: 'multi', paths: ['/Users/alice/projectA', '/Users/alice/projectB'] },
+      monitoredWorkspace: { mode: 'multi', paths: [projectAPath, projectBPath] },
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
-    expect(dirs).toHaveLength(2);
-    expect(dirs[0]).toContain('-Users-alice-projectA');
-    expect(dirs[1]).toContain('-Users-alice-projectB');
+    expect(dirs).toHaveLength(3);
+    expect(dirs).toContain(path.join(projectsDir, projectAEncoded));
+    expect(dirs).toContain(path.join(projectsDir, projectBEncoded));
+    expect(dirs).toContain(path.join(projectsDir, projectAWorktreeEncoded));
   });
 
   it('single mode with invalid path returns empty', () => {
@@ -130,26 +150,71 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
     expect(dirs).toHaveLength(0);
   });
+
+  it('includes Claude worktree directories for monitored workspaces by default', () => {
+    const platform = createMockPlatform({
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'auto' },
+      monitorWorktrees: true,
+    });
+    const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
+    const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
+    expect(dirs).toContain(path.join(projectsDir, projectAEncoded));
+    expect(dirs).toContain(path.join(projectsDir, projectAWorktreeEncoded));
+  });
+
+  it('can disable Claude worktree discovery via monitorWorktrees', () => {
+    const platform = createMockPlatform({
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'auto' },
+      monitorWorktrees: false,
+    });
+    const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
+    const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
+    expect(dirs).toEqual([path.join(projectsDir, projectAEncoded)]);
+  });
 });
 
 describe('MonitoredWorkspace — isFromCurrentWorkspace', () => {
   it('single mode accepts files from configured path', () => {
     const platform = createMockPlatform({
-      workspaceFolders: ['/Users/alice/projectA'],
-      monitoredWorkspace: { mode: 'single', path: '/Users/alice/projectB' },
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'single', path: projectBPath },
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
-    const filePath = path.join('/tmp/test-claude/projects', '-Users-alice-projectB', 'conv123.jsonl');
+    const filePath = path.join('/tmp/test-claude/projects', projectBEncoded, 'conv123.jsonl');
     expect((watcher as any).isFromCurrentWorkspace(filePath)).toBe(true);
   });
 
   it('single mode rejects files from non-configured path', () => {
     const platform = createMockPlatform({
-      workspaceFolders: ['/Users/alice/projectA'],
-      monitoredWorkspace: { mode: 'single', path: '/Users/alice/projectB' },
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'single', path: projectBPath },
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
-    const filePath = path.join('/tmp/test-claude/projects', '-Users-alice-projectA', 'conv123.jsonl');
+    const filePath = path.join('/tmp/test-claude/projects', projectAEncoded, 'conv123.jsonl');
+    expect((watcher as any).isFromCurrentWorkspace(filePath)).toBe(false);
+  });
+
+  it('accepts files from monitored Claude worktrees when enabled', () => {
+    const platform = createMockPlatform({
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'auto' },
+      monitorWorktrees: true,
+    });
+    const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
+    const filePath = path.join('/tmp/test-claude/projects', projectAWorktreeEncoded, 'conv123.jsonl');
+    expect((watcher as any).isFromCurrentWorkspace(filePath)).toBe(true);
+  });
+
+  it('rejects files from Claude worktrees when monitorWorktrees is disabled', () => {
+    const platform = createMockPlatform({
+      workspaceFolders: [projectAPath],
+      monitoredWorkspace: { mode: 'auto' },
+      monitorWorktrees: false,
+    });
+    const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
+    const filePath = path.join('/tmp/test-claude/projects', projectAWorktreeEncoded, 'conv123.jsonl');
     expect((watcher as any).isFromCurrentWorkspace(filePath)).toBe(false);
   });
 });

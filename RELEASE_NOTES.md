@@ -1,5 +1,32 @@
 # Release Notes
 
+## Version 1.2.15 (Mar 26 2026, 09:19)
+
+* **Provider-aware "Open in" menu** — standalone mode now shows context-aware options: Codex conversations offer "Open in Codex (VSCode)" and "Open in Codex (Cursor)"; Claude Code conversations offer "Resume in Terminal". All conversations show "Open in VSCode" and "Open in Cursor" as general editor options
+
+## Version 1.2.14 (Mar 26 2026, 11:05)
+
+* **Fix: Clicking Codex task no longer opens random Claude Code tab** — fixed non-deterministic behavior where clicking a Codex task card would sometimes focus a Claude Code conversation instead of the Codex sidebar, caused by tab mapping crossover between providers
+* **Fix: Focus detection no longer confuses Codex and Claude Code conversations** — tab-to-conversation matching now only considers Claude Code conversations, preventing the focus indicator from highlighting the wrong card
+
+## Version 1.2.13 (Mar 26 2026, 00:15)
+
+* **Fix: AI Summarization now works** — the summarization CLI call was silently failing because the prompt was piped via stdin (unreliable); it is now passed as a positional argument to `claude -p`
+* **Fix: Summarization toggle OFF reverts to originals** — toggling summarization off now triggers a refresh so conversations re-render with their original titles
+* **Fix: Spawn timeout properly enforced** — replaced invalid `spawn({ timeout })` with `AbortController` + `signal` for reliable process timeout
+* **Claude Code worktrees now appear on the board** — Claudine can now scan worktree sessions created under `.claude/worktrees/*` for each monitored workspace
+* **Worktree label on cards** — conversations from Claude worktrees now show a small `wt` badge with the worktree name so you can tell them apart at a glance
+
+## Version 1.2.12 (Mar 25 2026, 23:27)
+
+* **Fix: Codex tasks placed in correct columns** — detected Codex conversations now appear in "In Progress", "Needs Input", "In Review", or "Done" instead of incorrectly landing in "To Do"
+* **Fix: Clicking Codex task opens sidebar** — clicking a Codex task card now opens the Codex sidebar panel instead of the raw session file
+* **Fix: Opening Codex task no longer triggers Claude Code** — fixed a bug where clicking a Codex task would also open or focus a random Claude Code conversation due to the delayed focus call using the wrong provider
+
+## Version 1.2.11 (Mar 25 2026, 22:55)
+
+* **Fix: Monitored Workspace shared across windows** — the workspace path setting is now stored per-workspace in `.claudine/workspace-settings.json` (gitignored) instead of globally, so each VS Code window tracks its own monitored path independently
+
 ## Version 1.2.10 (Mar 11 2026, 15:02)
 
 * **Monitored Workspace** — see which workspace path is being monitored in Settings; switch between auto-detection (VSCode workspace), a single manually-picked path, or multiple paths with add/remove

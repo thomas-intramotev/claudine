@@ -34,6 +34,7 @@ export const window = {
   showWarningMessage: async () => undefined,
   tabGroups: {
     onDidChangeTabs: () => ({ dispose: () => {} }),
+    onDidChangeTabGroups: () => ({ dispose: () => {} }),
   },
   onDidChangeActiveTextEditor: () => ({ dispose: () => {} }),
   onDidChangeActiveTerminal: () => ({ dispose: () => {} }),

@@ -42,8 +42,15 @@ export class SummaryService {
     this._cache = platform.getGlobalState<Record<string, CachedSummary>>('summaryCache', {});
   }
 
-  /** Apply cached summary to a conversation. Returns true if cache hit. */
+  /**
+   * Apply cached summary to a conversation. Returns true if cache hit.
+   * BUG8b: Only applies when summarization is enabled — when OFF the
+   * conversation keeps its original title so the webview shows originals
+   * without relying on a reactive settings toggle in the template.
+   */
   public applyCached(conversation: Conversation): boolean {
+    const enabled = this._platform?.getConfig<boolean>('enableSummarization', false) ?? false;
+    if (!enabled) return false;
     const cached = this._cache[conversation.id];
     if (!cached) return false;
     conversation.originalTitle = conversation.title;
@@ -156,25 +163,35 @@ ${entries}
 Return ONLY a JSON array in the same order: [{"title":"...","description":"...","lastMessage":"..."}]`;
 
       const backend = this._cliBackend!;
+
+      // BUG8b: For Claude CLI, pass prompt as a positional argument — stdin
+      // piping is unreliable (CLI may not read it, producing empty output).
+      // For Codex CLI, stdin via '-' is the documented interface.
       const args = backend.kind === 'claude'
-        ? ['-p']
+        ? ['-p', '--no-session-persistence', prompt]
         : ['exec', '--ephemeral', '--skip-git-repo-check', '-'];
 
       let stdout = '';
       let stderr = '';
 
+      // BUG8b: spawn() does not support a `timeout` option (only exec/execFile
+      // do). Use AbortController to enforce the timeout instead.
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), CLI_TIMEOUT_MS);
+
       const child = spawn(backend.path, args, {
         cwd: os.tmpdir(),
-        timeout: CLI_TIMEOUT_MS,
-        env: CHILD_ENV
+        env: CHILD_ENV,
+        signal: ac.signal
       });
 
       child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
       child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
 
-      child.on('error', (err) => reject(err));
+      child.on('error', (err) => { clearTimeout(timer); reject(err); });
 
       child.on('close', (code) => {
+        clearTimeout(timer);
         if (code !== 0) {
           return reject(new Error(`${backend.kind} exited with code ${code}`));
         }
@@ -193,7 +210,10 @@ Return ONLY a JSON array in the same order: [{"title":"...","description":"...",
         }
       });
 
-      child.stdin.write(prompt);
+      // Codex reads from stdin; Claude uses the positional argument above.
+      if (backend.kind !== 'claude') {
+        child.stdin.write(prompt);
+      }
       child.stdin.end();
     });
   }

@@ -154,6 +154,15 @@
       </div>
     {/if}
 
+    <label class="toggle-field">
+      <input
+        type="checkbox"
+        checked={$settings.monitorWorktrees}
+        on:change={(e) => updateSetting('monitorWorktrees', e.currentTarget.checked)}
+      />
+      <span class="toggle-label">Scan Claude worktrees</span>
+    </label>
+
     <label class="field">
       <span class="field-label">Image Generation</span>
       <select value={$settings.imageGenerationApi} on:change={handleApiChange}>

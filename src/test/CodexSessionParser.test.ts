@@ -116,6 +116,21 @@ describe('CodexSessionParser', () => {
     expect(result).toBeNull();
   });
 
+  // ── BUG23: Codex sessions never return 'todo' ─────────────────────
+
+  it('BUG23: user-only session is in-progress, not todo', async () => {
+    const result = await parseContent(fixtures.userOnlySession);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe('in-progress');
+    expect(result!.title).toBe('Refactor the database layer');
+  });
+
+  it('BUG23: empty session (metadata-only) returns null, not todo', async () => {
+    const result = await parseContent(fixtures.emptySession);
+    // Empty sessions are filtered out entirely (no title/content)
+    expect(result).toBeNull();
+  });
+
   // ── Multi-turn ─────────────────────────────────────────────────────
 
   it('parses multi-turn session correctly', async () => {

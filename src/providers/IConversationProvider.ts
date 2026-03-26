@@ -45,6 +45,11 @@ export interface IConversationProvider {
   /** Return the workspace paths currently detected by the platform (for settings display). */
   getWorkspacePaths?(): string[];
 
+  /** Read a per-workspace setting from .claudine/workspace-settings.json. */
+  getWorkspaceLocalConfig?<T>(key: string, defaultValue: T): T;
+  /** Write a per-workspace setting to .claudine/workspace-settings.json. */
+  setWorkspaceLocalConfig?<T>(key: string, value: T): Promise<void>;
+
   // ── Project discovery (standalone progressive loading) ─────────────
 
   /** Quickly enumerate all project directories without parsing conversations. */

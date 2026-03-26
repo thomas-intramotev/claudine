@@ -77,6 +77,14 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     return this._platform.getWorkspaceFolders() ?? [];
   }
 
+  public getWorkspaceLocalConfig<T>(key: string, defaultValue: T): T {
+    return this._platform.getWorkspaceLocalConfig(key, defaultValue);
+  }
+
+  public async setWorkspaceLocalConfig<T>(key: string, value: T): Promise<void> {
+    await this._platform.setWorkspaceLocalConfig(key, value);
+  }
+
   /** Number of files held in the incremental parse cache. */
   public get parseCacheSize(): number {
     return this._parser.cacheSize;
@@ -163,12 +171,13 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     try {
       const conversation = await this._parser.parseFile(filePath);
       if (conversation) {
-        this._summaryService.applyCached(conversation);
-        this._stateManager.updateConversation(conversation);
+        const conversationWithWorkspace = this.applyWorkspaceMetadata(conversation, filePath);
+        this._summaryService.applyCached(conversationWithWorkspace);
+        this._stateManager.updateConversation(conversationWithWorkspace);
 
         // Kick off async summarization if not cached
         if (!this._summaryService.hasCached(conversation.id)) {
-          this._summaryService.summarizeUncached([conversation], (id, summary) => {
+          this._summaryService.summarizeUncached([conversationWithWorkspace], (id, summary) => {
             const existing = this._stateManager.getConversation(id);
             if (existing) {
               this._stateManager.updateConversation({
@@ -209,10 +218,10 @@ export class ClaudeCodeWatcher implements IConversationProvider {
   /** BUG2: Check whether a JSONL file belongs to one of the effective workspace's
    *  project directories. When no workspace is open, allow all files (fallback). */
   private isFromCurrentWorkspace(filePath: string): boolean {
-    const effectiveFolders = this.getEffectiveWorkspaceFolders();
-    if (!effectiveFolders || effectiveFolders.length === 0) return true; // fallback: no workspace → allow all
+    const effectiveRoots = this.getEffectiveWorkspaceRoots();
+    if (!effectiveRoots || effectiveRoots.length === 0) return true; // fallback: no workspace → allow all
 
-    for (const folder of effectiveFolders) {
+    for (const folder of effectiveRoots) {
       if (this._excludedWorkspacePath && folder === this._excludedWorkspacePath) continue;
       const encodedPath = this.encodeWorkspacePath(folder);
       const normalizedFilePath = filePath.replace(/[\\/]/g, path.sep);
@@ -242,7 +251,7 @@ export class ClaudeCodeWatcher implements IConversationProvider {
           try {
             const conversation = await this._parser.parseFile(filePath);
             if (conversation) {
-              conversations.push(conversation);
+              conversations.push(this.applyWorkspaceMetadata(conversation, filePath));
             }
           } catch (error) {
             console.error(`Claudine: Error parsing ${filePath}`, error);
@@ -269,7 +278,7 @@ export class ClaudeCodeWatcher implements IConversationProvider {
    * Returns null when auto mode has no workspace open (scan-all fallback).
    */
   private getEffectiveWorkspaceFolders(): string[] | null {
-    const monitored = this._platform.getConfig<{ mode: string; path?: string; paths?: string[] }>(
+    const monitored = this._platform.getWorkspaceLocalConfig<{ mode: string; path?: string; paths?: string[] }>(
       'monitoredWorkspace', { mode: 'auto' }
     );
 
@@ -283,6 +292,60 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     return this._platform.getWorkspaceFolders();
   }
 
+  /**
+   * Expand the monitored workspace list with Claude Code worktree roots when enabled.
+   * Worktree sessions live under their own encoded roots in `~/.claude/projects`.
+   */
+  private getEffectiveWorkspaceRoots(): string[] | null {
+    const effectiveFolders = this.getEffectiveWorkspaceFolders();
+    if (!effectiveFolders || effectiveFolders.length === 0) return effectiveFolders;
+
+    const roots: string[] = [];
+    const seen = new Set<string>();
+
+    const addRoot = (workspacePath: string) => {
+      const normalized = this.normalizeWorkspacePath(workspacePath);
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      roots.push(normalized);
+    };
+
+    for (const folder of effectiveFolders) {
+      addRoot(folder);
+      if (!this.shouldMonitorWorktrees()) continue;
+      for (const worktreePath of this.getClaudeWorktreePaths(folder)) {
+        addRoot(worktreePath);
+      }
+    }
+
+    return roots;
+  }
+
+  private shouldMonitorWorktrees(): boolean {
+    return this._platform.getConfig<boolean>('monitorWorktrees', true);
+  }
+
+  private normalizeWorkspacePath(workspacePath: string): string {
+    const normalized = path.normalize(workspacePath);
+    if (normalized === path.sep) return normalized;
+    return normalized.replace(/[\\/]+$/, '');
+  }
+
+  private getClaudeWorktreePaths(workspacePath: string): string[] {
+    const worktreesDir = path.join(workspacePath, '.claude', 'worktrees');
+    if (!fs.existsSync(worktreesDir)) return [];
+
+    try {
+      const entries = fs.readdirSync(worktreesDir, { withFileTypes: true });
+      return entries
+        .filter(entry => entry.isDirectory())
+        .map(entry => path.join(worktreesDir, entry.name));
+    } catch (error) {
+      console.warn(`Claudine: Could not read Claude worktrees in ${worktreesDir}`, error);
+      return [];
+    }
+  }
+
   private getProjectDirsToScan(projectsPath: string): string[] {
     const dirs: string[] = [];
 
@@ -292,11 +355,11 @@ export class ClaudeCodeWatcher implements IConversationProvider {
         return dirs;
       }
 
-      const effectiveFolders = this.getEffectiveWorkspaceFolders();
+      const effectiveRoots = this.getEffectiveWorkspaceRoots();
 
-      if (effectiveFolders && effectiveFolders.length > 0) {
-        // Only scan project directories that match the effective folders
-        for (const folder of effectiveFolders) {
+      if (effectiveRoots && effectiveRoots.length > 0) {
+        // Only scan project directories that match the effective workspace roots
+        for (const folder of effectiveRoots) {
           // Skip the extension's own workspace when running in EDH
           if (this._excludedWorkspacePath && folder === this._excludedWorkspacePath) {
             console.log(`Claudine: Skipping extension dev workspace: ${folder}`);
@@ -344,6 +407,43 @@ export class ClaudeCodeWatcher implements IConversationProvider {
    */
   private encodeWorkspacePath(workspacePath: string): string {
     return workspacePath.replace(/[/\\.:]/g, '-');
+  }
+
+  private resolveWorkspacePathForFile(filePath: string): string | undefined {
+    const effectiveRoots = this.getEffectiveWorkspaceRoots();
+    if (!effectiveRoots || effectiveRoots.length === 0) return undefined;
+
+    const normalizedFilePath = filePath.replace(/[\\/]/g, path.sep);
+    for (const root of effectiveRoots) {
+      const encodedPath = this.encodeWorkspacePath(root);
+      if (normalizedFilePath.includes(`${path.sep}${encodedPath}${path.sep}`)) {
+        return root;
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractWorktreeName(workspacePath: string | undefined): string | undefined {
+    if (!workspacePath) return undefined;
+    const normalized = workspacePath.replace(/\\/g, '/');
+    const match = normalized.match(/\/\.claude\/worktrees\/([^/]+)(?:\/|$)/);
+    return match?.[1];
+  }
+
+  private applyWorkspaceMetadata(conversation: Conversation, filePath: string): Conversation {
+    const resolvedWorkspacePath = this.resolveWorkspacePathForFile(filePath) ?? conversation.workspacePath;
+    const worktreeName = this.extractWorktreeName(resolvedWorkspacePath);
+
+    if (resolvedWorkspacePath === conversation.workspacePath && worktreeName === conversation.worktreeName) {
+      return conversation;
+    }
+
+    return {
+      ...conversation,
+      workspacePath: resolvedWorkspacePath,
+      worktreeName,
+    };
   }
 
   // ── Project discovery & progressive scanning (standalone) ─────────
@@ -453,7 +553,7 @@ export class ClaudeCodeWatcher implements IConversationProvider {
           try {
             const conversation = await this._parser.parseFile(filePath);
             if (conversation) {
-              projectConvs.push(conversation);
+              projectConvs.push(this.applyWorkspaceMetadata(conversation, filePath));
             }
           } catch (error) {
             console.error(`Claudine: Error parsing ${filePath}`, error);

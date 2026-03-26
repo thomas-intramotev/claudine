@@ -2,7 +2,7 @@
   "name": "claudine",
   "displayName": "Claudine",
   "description": "%extension.description%",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "publisher": "claudine",
   "license": "MIT",
   "icon": "resources/icons/claudine-activitybar.png",
@@ -280,9 +280,16 @@
           "default": true,
           "description": "%config.showTaskGitBranch.description%"
         },
+        "claudine.monitorWorktrees": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, Claudine also scans Claude Code worktrees under each monitored workspace at .claude/worktrees/*."
+        },
         "claudine.monitoredWorkspace": {
           "type": "object",
-          "default": { "mode": "auto" },
+          "default": {
+            "mode": "auto"
+          },
           "description": "Which workspace path(s) to monitor for conversations. Modes: auto (use VSCode workspace), single (one path), multi (multiple paths)."
         }
       }

@@ -75,6 +75,20 @@ export class CompositeConversationProvider implements IConversationProvider {
     for (const child of this._children) child.clearPendingIcons();
   }
 
+  // ── Workspace (delegated to primary child) ──────────────────────
+
+  getWorkspacePaths(): string[] {
+    return this._children[0].getWorkspacePaths?.() ?? [];
+  }
+
+  getWorkspaceLocalConfig<T>(key: string, defaultValue: T): T {
+    return this._children[0].getWorkspaceLocalConfig?.(key, defaultValue) ?? defaultValue;
+  }
+
+  async setWorkspaceLocalConfig<T>(key: string, value: T): Promise<void> {
+    await this._children[0].setWorkspaceLocalConfig?.(key, value);
+  }
+
   // ── Project discovery (delegated to primary child) ───────────────
 
   discoverProjects(): ProjectManifestEntry[] {

@@ -198,6 +198,7 @@ export interface Conversation {
   createdAt: Date | string;
   updatedAt: Date | string;
   workspacePath?: string;
+  worktreeName?: string;
 }
 
 /** A group of conversations belonging to the same project. */
@@ -234,6 +235,7 @@ export interface ClaudineSettings {
   showTaskDescription: boolean;
   showTaskLatest: boolean;
   showTaskGitBranch: boolean;
+  monitorWorktrees: boolean;
   monitoredWorkspace: MonitoredWorkspace;
   detectedWorkspacePaths: string[];
 }

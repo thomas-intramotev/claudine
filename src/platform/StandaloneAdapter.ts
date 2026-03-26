@@ -133,6 +133,15 @@ export class StandaloneAdapter implements IPlatformAdapter {
     );
   }
 
+  // Standalone mode has no workspace concept — delegate to global config
+  getWorkspaceLocalConfig<T>(key: string, defaultValue: T): T {
+    return this.getConfig(key, defaultValue);
+  }
+
+  async setWorkspaceLocalConfig<T>(key: string, value: T): Promise<void> {
+    await this.setConfig(key, value);
+  }
+
   // ── File system ──────────────────────────────────────────────────
 
   async ensureDirectory(dirPath: string): Promise<void> {

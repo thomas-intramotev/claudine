@@ -136,6 +136,16 @@
 - **Root cause:** Same `_replacingStaleTab` race condition as BUG14. Each loop iteration opens a new tab → `onDidChangeTabs` fires → `scheduleFocusDetection` → `detectFocusedConversation` re-enters `replaceRestoredTab` → rapid tab switching. Additionally, the `onOpenConversation` callback does not call `suppressFocus()`, so focus-detection cascades have no debounce protection. CLAUDINE.AGENTS.md may also contribute by instructing agents to poll the board, triggering repeated state changes.
 - [✔️] Fixed — same fix as BUG14; additionally updated CLAUDINE.AGENTS.md with explicit warnings against polling/looping, explaining that Claudine handles status transitions automatically
 
+## BUG14c — Opening a new Claude Code conversation spawns infinite duplicate views
+
+- **Reported:** 2026-03-25
+- **Symptom:** Clicking a Claude Code button to open a new conversation causes Claudine to open many Claude Code conversations in an infinite loop, as if it keeps spawning them in parallel.
+- **Root cause:** Three compounding issues in `TabManager`:
+  1. The `replaceRestoredTab` mechanism (meant only for VS Code startup shell restoration) could trigger on ANY unmapped tab in a fresh session — including legitimately new tabs the user opens via Claude Code's own buttons. The `_tabToConversation.size === 0` condition was too broad.
+  2. The `_onOpenConversation` callback in KanbanViewProvider did not call `suppressFocus()`, so the replacement tab immediately triggered another detection cascade.
+  3. The suppression in `replaceRestoredTab` was `FOCUS_DETECTION_DEBOUNCE_MS * 3 = 450ms`, which expired BEFORE `recordActiveTabMapping` ran at 500ms, leaving a 50ms gap for re-entry.
+- [✔️] Fixed — added `_restoredTabReplacementDone` flag that is set after the first `detectFocusedConversation` call, ensuring `replaceRestoredTab` can only fire once per session; added `suppressFocus(FOCUS_SUPPRESS_DURATION_MS)` to the `_onOpenConversation` callback; increased suppression in `replaceRestoredTab` from 450ms to `FOCUS_SUPPRESS_DURATION_MS` (2s)
+
 ## BUG15 — Metadata/system messages appear as kanban tasks
 
 - **Reported:** 2026-03-06
@@ -193,3 +203,77 @@
   1. `collectSidechainStep()` uses a flat ring buffer capped at `MAX_SIDECHAIN_STEPS = 3`. All sidechain entries from all agents are mixed into one stream, losing per-agent identity. 5 agents running → only last 3 tool activity steps shown, not 5 agent dots.
   2. `detectStatus()` only examines main-thread messages. It never checks `sidechainSteps` for running agents, so completion patterns in the main thread override the fact that background agents are still working.
 - [✔️] Fixed — `collectSidechainStep()` now tracks per-agent status by tracing `parentUuid` chains: each distinct sidechain gets one dot showing its latest status. `detectStatus()` now checks for running sidechain agents and returns `in-progress` instead of `in-review` when background agents are still working
+
+## BUG21 — Monitored Workspace setting shared across all VS Code windows
+
+- **Reported:** 2026-03-25
+- **Symptom:** Changing the Monitored Workspace setting in one VS Code window (sidebar or bottom panel) affects all other concurrently open windows. Each workspace should have its own independent setting.
+- **Root cause:** The `monitoredWorkspace` setting was stored in `vscode.ConfigurationTarget.Global`, making it a single global value shared across all VS Code windows and workspaces. Both `ClaudeCodeWatcher.getEffectiveWorkspaceFolders()` and `KanbanViewProvider.updateSettings()` read from this global config.
+- [✔️] Fixed — moved `monitoredWorkspace` from global VS Code config to a per-workspace file at `.claudine/workspace-settings.json` (already gitignored). Added `getWorkspaceLocalConfig`/`setWorkspaceLocalConfig` to the platform adapter interface. Each VS Code window now reads/writes its own workspace-local setting independently.
+
+## BUG7b — False positive "Rate limit hit" popup from non-rate-limit conversations
+- **Reported:** 2026-03-25
+- **Symptom:** VS Code popup "Rate limit hit — resets 10am (Europe/Zurich)" appears even when there is no active rate limit. The popup shows but the yellow banner in the kanban board does not.
+- **Root cause:** Three compounding issues:
+  1. When a rate-limit message has no `entry.timestamp`, `parseResetTime` falls back to `new Date()` — same defect as BUG7 but in the missing-timestamp path. Each restart recomputes a future reset time.
+  2. `RATE_LIMIT_PATTERN` matches text in conversations that *discuss* rate limits (e.g. while developing Claudine). A long Claude response quoting the rate-limit message triggers a false positive.
+  3. `hasRecentRateLimit` returns `true` when both `rateLimitResetTime` and `timestamp` are undefined (no-data fallback is overly aggressive).
+  4. `detectStatus` checks message-level `isRateLimited` without time validation, marking expired rate limits as `needs-input`.
+- [✔️] Fixed — four changes in ConversationParser: (1) `parseResetTime` no longer called when `messageDate` is undefined, (2) `RATE_LIMIT_PATTERN` only checked on short text blocks (<200 chars), (3) `hasRecentRateLimit` returns false when both timestamp and reset time are missing, (4) `detectStatus` uses time-aware rate limit check
+
+## BUG22 — 👀 focus indicator not updating when switching Claude Code tabs
+
+- **Reported:** 2026-03-25
+- **Symptom:** Clicking on / switching to a different Claude Code conversation tab in VS Code does not automatically update the 👀 focus indicator in the Claudine kanban board.
+- **Root cause:** Two issues in focus detection:
+  1. `KanbanViewProvider` listens to `tabGroups.onDidChangeTabs` (fires on tab open/close/property change) but not `tabGroups.onDidChangeTabGroups` (fires when a tab group's `activeTab` changes — i.e., when the user clicks a different tab). The `onDidChangeTabs` event isn't guaranteed to fire for tab activation changes in all VS Code versions.
+  2. The `onDidChangeVisibility` handler calls `refresh()` but not `detectFocusedConversation()`, so focus state isn't re-synced when the Claudine sidebar becomes visible after being hidden.
+- [✔️] Fixed — added `tabGroups.onDidChangeTabGroups` event listener (fires when a group's `activeTab` changes); added `detectFocusedConversation()` call in `onDidChangeVisibility` handler to re-sync focus when sidebar becomes visible
+
+## BUG23 — Codex tasks incorrectly placed in "To Do" column
+
+- **Reported:** 2026-03-25
+- **Symptom:** When Claudine detects Codex conversations, they appear in the "To Do" column even though they are already started and running.
+- **Root cause:** `CodexSessionParser.detectStatus()` returns `'todo'` when only user messages are present (no agent response yet). Unlike Claude Code where a "to do" state is meaningful (e.g. draft ideas), Codex sessions are file-based — by the time we detect a JSONL file, the conversation has already been submitted and is running. The minimum state should be `'in-progress'`.
+- [✔️] Fixed — `detectStatus()` now returns `'in-progress'` as the default instead of `'todo'` for Codex sessions
+
+## BUG23b — Clicking Codex task opens JSONL file instead of Codex sidebar
+
+- **Reported:** 2026-03-25
+- **Symptom:** Clicking a task card for a Codex conversation opens the raw `.jsonl` session file in the editor, instead of focusing the Codex sidebar panel.
+- **Root cause:** `CodexEditorCommands.openConversation()` falls back to opening the JSONL file via `vscode.workspace.openTextDocument()` because the Codex VS Code extension (`openai.chatgpt`) was assumed to not expose a command API. However, the extension does register `chatgpt.openSidebar` which can be used to open the Codex panel.
+- [✔️] Fixed — `CodexEditorCommands` now calls `chatgpt.openSidebar` first (focuses the Codex sidebar panel), falling back to opening the JSONL file only if the command is unavailable
+
+## BUG23c — Opening Codex task also opens/focuses a Claude Code conversation
+
+- **Reported:** 2026-03-25
+- **Symptom:** Clicking a Codex task card opens the Codex sidebar correctly, but an instant later also opens an empty Claude Code conversation or focuses a random existing one.
+- **Root cause:** `KanbanViewProvider.openConversation()` calls `focusEditorOnce()` after a successful open. `focusEditorOnce()` always uses `this._editorCommands` (the default editor commands, which is Claude Code's `ClaudeCodeEditorCommands`), regardless of which provider's conversation was opened. This fires `claude-vscode.focus` after a delay, triggering Claude Code to open/focus a conversation. Related to the "dozens of Claude Code conversations" bug — repeated clicks compound the delayed focus calls.
+- [✔️] Fixed — `focusEditorOnce()` now accepts a provider-specific `IEditorCommands` parameter; `openConversation()` passes the resolved provider commands so the delayed focus targets the correct editor (Codex sidebar or Claude Code)
+
+## BUG24 — Clicking Codex task non-deterministically opens a Claude Code conversation
+
+- **Reported:** 2026-03-26
+- **Symptom:** Clicking a Codex task card sometimes opens the Codex sidebar correctly, but other times focuses a random Claude Code conversation tab instead. The behavior is non-deterministic — it depends on which Claude Code tab happens to be active at the moment.
+- **Root cause:** Three compounding issues:
+  1. `KanbanViewProvider.openConversation()` schedules `recordActiveTabMapping(conversationId)` for ALL conversations including Codex. But `TabManager.recordActiveTabMapping` only detects Claude Code tabs (`_isProviderTab` matches Claude webview tabs). When a Codex conversation is opened (sidebar focus), whichever Claude Code tab happens to be active gets mapped to the Codex conversation ID.
+  2. On subsequent clicks, `getTabLabel(conversationId)` returns the wrongly-cached Claude Code tab label, and `focusTabByLabel` focuses that Claude Code tab — completely bypassing the Codex sidebar.
+  3. `TabManager.matchTabToConversation()` does fuzzy title matching against ALL conversations including Codex, so focus detection can report a Codex conversation ID when a Claude Code tab with a similar title is focused.
+- [✔️] Fixed — `openConversation` and `sendPromptToConversation` now skip tab caching, `closeUnmappedClaudeTabByTitle`, `focusEditorOnce`, and `recordActiveTabMapping` for non-tab-based providers (Codex); `matchTabToConversation` filters out Codex conversations so focus detection only matches Claude Code tabs to Claude Code conversations
+
+## BUG24b — Clicking Codex task should open the specific conversation (not just sidebar)
+
+- **Reported:** 2026-03-26
+- **Symptom:** Clicking a Codex task card opens the Codex sidebar panel, but doesn't navigate to the specific conversation. The user has to find it manually.
+- **Root cause:** The Codex VS Code extension (`openai.chatgpt`) does not expose a command to open a specific conversation by ID — only `chatgpt.openSidebar` is available. This is a limitation of the Codex extension's public API, not of Claudine. Once Codex exposes such a command, `CodexEditorCommands.openConversation` can be updated.
+- [ ] Blocked on Codex extension API
+
+## BUG8b — AI summarization produces no summaries and toggle-off has no effect
+
+- **Reported:** 2026-03-26
+- **Symptom:** Clicking the AI Summarization toolbar button appears to toggle the setting (button changes visually), but no conversation titles or descriptions are ever summarized. Toggling it back off also has no visible effect — the original text was never replaced, so there is nothing to revert.
+- **Root cause:** Three compounding issues in `SummaryService`:
+  1. **stdin not received by Claude CLI**: `callCli()` writes the summarization prompt to `child.stdin`, but `claude -p` may not reliably read piped stdin from a spawned child process. The CLI exits with code 0 and empty stdout, causing the JSON parser to reject with "No JSON array in claude response". This error is caught and logged to the console only — no notification reaches the user.
+  2. **`spawn` timeout option is ignored**: Node.js `spawn()` does not support a `timeout` option (only `exec`/`execFile` do). The 60-second timeout passed to `spawn` is silently ignored, so a hanging CLI process would block indefinitely.
+  3. **Toggle OFF skips refresh**: When summarization is toggled OFF, only `updateSettings()` is called — `refresh()` is not. While Svelte reactivity should re-render based on the settings change, if no summaries were ever generated (due to issues 1–2), the conversations never received `originalTitle` fields, so the toggle has no visible effect in either direction.
+- [✔️] Fixed — three changes: (1) `callCli` now passes the prompt as a positional argument to `claude -p` instead of via stdin, (2) `spawn` timeout replaced with `AbortController` + `signal`, (3) toggle OFF now calls `refresh()` in both VS Code and standalone handlers

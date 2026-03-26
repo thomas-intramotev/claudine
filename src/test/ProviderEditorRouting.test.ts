@@ -158,4 +158,136 @@ describe('KanbanViewProvider — BUG17: provider-aware editor routing', () => {
 
     expect(codexEditorCommands.openConversation).toHaveBeenCalledWith('codex-abc123');
   });
+
+  // BUG23c + BUG24: Opening a Codex conversation must NOT trigger any delayed
+  // focusEditor — the Codex sidebar is already opened by openConversation().
+  it('BUG23c/BUG24: no delayed focusEditor after opening Codex conversation', async () => {
+    const conv = makeConversation({ id: 'codex-abc123', provider: 'codex' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    await provider.openConversation('codex-abc123');
+
+    // Advance timers past the EDITOR_FOCUS_DELAY_MS (800ms)
+    vi.advanceTimersByTime(1000);
+
+    // Neither provider's focusEditor should be called — Codex sidebar is already open
+    expect(codexEditorCommands.focusEditor).not.toHaveBeenCalled();
+    expect(claudeEditorCommands.focusEditor).not.toHaveBeenCalled();
+  });
+
+  it('BUG23c: focusEditor after opening Claude conversation uses Claude commands', async () => {
+    const conv = makeConversation({ id: 'claude-conv-1', provider: 'claude-code' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    await provider.openConversation('claude-conv-1');
+
+    vi.advanceTimersByTime(1000);
+
+    expect(claudeEditorCommands.focusEditor).toHaveBeenCalled();
+    expect(codexEditorCommands.focusEditor).not.toHaveBeenCalled();
+  });
+});
+
+describe('KanbanViewProvider — BUG24: Codex click must not map/focus Claude Code tabs', () => {
+  let provider: KanbanViewProvider;
+  let mockStateManager: ReturnType<typeof createMockStateManager>;
+  let claudeEditorCommands: ReturnType<typeof createMockEditorCommands>;
+  let codexEditorCommands: ReturnType<typeof createMockEditorCommands>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockStateManager = createMockStateManager();
+    claudeEditorCommands = createMockEditorCommands();
+    codexEditorCommands = createMockEditorCommands();
+
+    const editorCommandsByProvider = new Map<string, IEditorCommands>();
+    editorCommandsByProvider.set('claude-code', claudeEditorCommands);
+    editorCommandsByProvider.set('codex', codexEditorCommands);
+
+    provider = new KanbanViewProvider(
+      { fsPath: '/mock/extension', scheme: 'file' } as never,
+      mockStateManager as never,
+      {} as never,
+      claudeEditorCommands,
+      editorCommandsByProvider,
+    );
+  });
+
+  afterEach(() => {
+    provider.dispose();
+    vi.useRealTimers();
+  });
+
+  it('BUG24: does NOT call recordActiveTabMapping for Codex conversations', async () => {
+    const conv = makeConversation({ id: 'codex-abc123', provider: 'codex' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    await provider.openConversation('codex-abc123');
+    vi.advanceTimersByTime(1000); // past TAB_MAPPING_DELAY_MS (500ms)
+
+    const tabManager = (provider as any)._tabManager;
+    expect(tabManager.recordActiveTabMapping).not.toHaveBeenCalled();
+  });
+
+  it('BUG24: DOES call recordActiveTabMapping for Claude Code conversations', async () => {
+    const conv = makeConversation({ id: 'claude-conv-1', provider: 'claude-code' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    await provider.openConversation('claude-conv-1');
+    vi.advanceTimersByTime(1000);
+
+    const tabManager = (provider as any)._tabManager;
+    expect(tabManager.recordActiveTabMapping).toHaveBeenCalledWith('claude-conv-1');
+  });
+
+  it('BUG24: does NOT use cached tab label for Codex conversations', async () => {
+    const conv = makeConversation({ id: 'codex-abc123', provider: 'codex' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    // Simulate a stale tab mapping from a previous (buggy) session
+    const tabManager = (provider as any)._tabManager;
+    tabManager.getTabLabel.mockReturnValue('Some Claude Tab');
+    tabManager.focusTabByLabel.mockResolvedValue(true);
+
+    await provider.openConversation('codex-abc123');
+
+    // Should NOT try to focus the cached Claude Code tab
+    expect(tabManager.focusTabByLabel).not.toHaveBeenCalled();
+    // Should open via Codex editor commands instead
+    expect(codexEditorCommands.openConversation).toHaveBeenCalledWith('codex-abc123');
+  });
+
+  it('BUG24: does NOT call closeUnmappedClaudeTabByTitle for Codex conversations', async () => {
+    const conv = makeConversation({ id: 'codex-abc123', provider: 'codex' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    await provider.openConversation('codex-abc123');
+
+    const tabManager = (provider as any)._tabManager;
+    expect(tabManager.closeUnmappedClaudeTabByTitle).not.toHaveBeenCalled();
+  });
+
+  it('BUG24: does NOT call focusEditorOnce for Codex conversations', async () => {
+    const conv = makeConversation({ id: 'codex-abc123', provider: 'codex' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    await provider.openConversation('codex-abc123');
+    vi.advanceTimersByTime(1000);
+
+    // Codex sidebar is already open from openConversation — no delayed focus needed
+    expect(codexEditorCommands.focusEditor).not.toHaveBeenCalled();
+    expect(claudeEditorCommands.focusEditor).not.toHaveBeenCalled();
+  });
+
+  it('BUG24: sendPromptToConversation does NOT call recordActiveTabMapping for Codex', async () => {
+    const conv = makeConversation({ id: 'codex-abc123', provider: 'codex' });
+    mockStateManager.getConversation.mockReturnValue(conv);
+
+    // sendPromptToConversation is private — call it via the webview message handler
+    await (provider as any).sendPromptToConversation('codex-abc123', 'test prompt');
+    vi.advanceTimersByTime(1000);
+
+    const tabManager = (provider as any)._tabManager;
+    expect(tabManager.recordActiveTabMapping).not.toHaveBeenCalled();
+  });
 });

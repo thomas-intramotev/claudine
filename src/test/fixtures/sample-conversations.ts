@@ -369,6 +369,56 @@ export const rateLimitStaleConversation = [
   assistantMessage("You've hit your limit \u00b7 resets 10am (Europe/Zurich)", 1497),
 ].join('\n');
 
+// ── BUG7b — False positive rate limit scenarios ──────────────────────
+
+/** BUG7b — Rate limit message without timestamp — should NOT be flagged as active
+ *  because we can't anchor the reset time to a real moment. */
+export const rateLimitNoTimestampConversation = [
+  userMessage('Implement the search feature', 1500),  // ~25 hours ago
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    // No timestamp!
+    sessionId: 'test-session',
+    parentUuid: null,
+    isSidechain: false,
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: "You\u2019ve hit your limit \u00b7 resets 10am (Europe/Zurich)" }],
+    },
+  }),
+].join('\n');
+
+/** BUG7b — Long discussion that quotes the rate-limit message — should NOT be flagged. */
+export const rateLimitDiscussionConversation = [
+  userMessage('How does rate limit detection work?', 10),
+  assistantMessage(
+    'The rate limit message format is: "You\'ve hit your limit \u00b7 resets 10am (Europe/Zurich)". ' +
+    'This is detected by the RATE_LIMIT_PATTERN regex in constants.ts. The parser extracts the ' +
+    'time and timezone, then computes when the limit resets using parseResetTime(). The reset time ' +
+    'is compared against the current time in hasRecentRateLimit() to determine if the limit is ' +
+    'still active. If the reset time is in the past, the conversation is not flagged.',
+    9
+  ),
+].join('\n');
+
+/** BUG7b — Rate limit message with no timestamp AND no parseable reset time — should NOT be flagged. */
+export const rateLimitNoDataConversation = [
+  userMessage('Do something', 1500),
+  line({
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    // No timestamp!
+    sessionId: 'test-session',
+    parentUuid: null,
+    isSidechain: false,
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: "You\u2019ve hit your limit \u00b7 resets 10am (InvalidTimezone/Foo)" }],
+    },
+  }),
+].join('\n');
+
 // ── BUG5 — False "needs input" while agent is working ────────────────
 
 /** BUG5 — Recently active conversation where Claude dispatched a tool (e.g. Read)

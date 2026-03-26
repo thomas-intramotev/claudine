@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   IPlatformAdapter,
   Disposable,
@@ -52,6 +54,48 @@ export class VsCodeAdapter implements IPlatformAdapter {
 
   async setConfig<T>(key: string, value: T): Promise<void> {
     await vscode.workspace.getConfiguration('claudine').update(key, value, vscode.ConfigurationTarget.Global);
+  }
+
+  // ── Workspace-local configuration (.claudine/workspace-settings.json) ──
+
+  private _workspaceSettingsCache: Record<string, unknown> | null = null;
+
+  private getWorkspaceSettingsPath(): string | null {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) { return null; }
+    return path.join(folders[0].uri.fsPath, '.claudine', 'workspace-settings.json');
+  }
+
+  private loadWorkspaceSettings(): Record<string, unknown> {
+    if (this._workspaceSettingsCache) { return this._workspaceSettingsCache; }
+    const settingsPath = this.getWorkspaceSettingsPath();
+    if (!settingsPath) { return {}; }
+    try {
+      if (fs.existsSync(settingsPath)) {
+        this._workspaceSettingsCache = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        return this._workspaceSettingsCache!;
+      }
+    } catch { /* ignore corrupt file */ }
+    return {};
+  }
+
+  getWorkspaceLocalConfig<T>(key: string, defaultValue: T): T {
+    const settings = this.loadWorkspaceSettings();
+    const value = settings[key];
+    return value !== undefined ? value as T : defaultValue;
+  }
+
+  async setWorkspaceLocalConfig<T>(key: string, value: T): Promise<void> {
+    const settingsPath = this.getWorkspaceSettingsPath();
+    if (!settingsPath) { return; }
+    const settings = this.loadWorkspaceSettings();
+    settings[key] = value;
+    this._workspaceSettingsCache = settings;
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   }
 
   // ── File system ──────────────────────────────────────────────────

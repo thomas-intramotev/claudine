@@ -41,6 +41,7 @@ export const settings = writable<ClaudineSettings>({
   showTaskDescription: true,
   showTaskLatest: true,
   showTaskGitBranch: true,
+  monitorWorktrees: true,
   monitoredWorkspace: { mode: 'auto' as const },
   detectedWorkspacePaths: [] as string[],
 });

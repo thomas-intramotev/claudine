@@ -46,6 +46,8 @@ function createMockPlatform(): IPlatformAdapter {
     setSecret: async () => {},
     getGlobalStoragePath: () => '/tmp/claudine-test',
     getWorkspaceFolders: () => null,
+    getWorkspaceLocalConfig: <T>(_k: string, d: T) => d as T,
+    setWorkspaceLocalConfig: async () => {},
     isDevelopmentMode: () => false,
     getExtensionPath: () => undefined,
   };
@@ -96,6 +98,7 @@ describe('BUG8 – toggleSummarization in standalone mode', () => {
         showTaskDescription: true,
         showTaskLatest: true,
         showTaskGitBranch: true,
+        monitorWorktrees: true,
         monitoredWorkspace: { mode: 'auto' },
         detectedWorkspacePaths: [],
       };
@@ -118,7 +121,7 @@ describe('BUG8 – toggleSummarization in standalone mode', () => {
     // Simulate what the fixed updateSetting handler does
     const ALLOWED_SETTING_KEYS = [
       'imageGenerationApi', 'enableSummarization', 'autoRestartAfterRateLimit',
-      'showTaskIcon', 'showTaskDescription', 'showTaskLatest', 'showTaskGitBranch'
+      'showTaskIcon', 'showTaskDescription', 'showTaskLatest', 'showTaskGitBranch', 'monitorWorktrees'
     ];
 
     const key = 'enableSummarization';
@@ -134,7 +137,7 @@ describe('BUG8 – toggleSummarization in standalone mode', () => {
   it('updateSetting handler ignores unknown keys', async () => {
     const ALLOWED_SETTING_KEYS = [
       'imageGenerationApi', 'enableSummarization', 'autoRestartAfterRateLimit',
-      'showTaskIcon', 'showTaskDescription', 'showTaskLatest', 'showTaskGitBranch'
+      'showTaskIcon', 'showTaskDescription', 'showTaskLatest', 'showTaskGitBranch', 'monitorWorktrees'
     ];
 
     const key = 'someUnknownKey';

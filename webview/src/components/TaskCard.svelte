@@ -21,6 +21,7 @@
   $: categoryDetails = getCategoryDetails(conversation.category);
   $: needsInteraction = conversation.status === 'needs-input' && !conversation.isInterrupted;
   $: hasMetaContent = ($settings.showTaskGitBranch && conversation.gitBranch)
+    || conversation.worktreeName
     || conversation.sidechainSteps?.length
     || conversation.agents.some(a => a.isActive);
 
@@ -171,10 +172,12 @@
     }
   }
 
-  function handleOpenAs(target: 'terminal' | 'vscode') {
+  function handleOpenAs(target: string) {
     openMenuVisible = false;
     vscode.postMessage({ type: 'openConversationAs', conversationId: conversation.id, target });
   }
+
+  $: isCodex = conversation.provider === 'codex';
 
   function handleClickOutsideMenu(e: MouseEvent) {
     if (openMenuVisible && openMenuEl && !openMenuEl.contains(e.target as Node)) {
@@ -238,7 +241,7 @@
 
 {#if conversation.isDraft}
   <!-- Draft view: just the prompt text + send button -->
-  <div class="task-card draft" on:contextmenu={handleContextMenu}>
+  <div class="task-card draft" role="article" on:contextmenu={handleContextMenu}>
     <div class="drag-handle" title="Drag to move">
       <svg viewBox="0 0 6 10" fill="currentColor"><circle cx="1.5" cy="1.5" r="1"/><circle cx="4.5" cy="1.5" r="1"/><circle cx="1.5" cy="5" r="1"/><circle cx="4.5" cy="5" r="1"/><circle cx="1.5" cy="8.5" r="1"/><circle cx="4.5" cy="8.5" r="1"/></svg>
     </div>
@@ -271,6 +274,7 @@
     class:focused
     style="--category-color: {categoryDetails.color}"
     title={cleanTitle(displayTitle)}
+    role="article"
     on:contextmenu={handleContextMenu}
   >
     <div class="drag-handle narrow-drag" title="Drag to move">
@@ -310,6 +314,7 @@
     class:has-error={conversation.hasError}
     class:focused
     style="--category-color: {categoryDetails.color}"
+    role="article"
     on:contextmenu={handleContextMenu}
   >
     <div class="drag-handle" title="Drag to move">
@@ -337,23 +342,38 @@
         <span class="compact-badge" style="background:{categoryDetails.color}">{categoryDetails.icon}</span>
       {/if}
     </div>
-    {#if showTimer}
-      <span class="activity-timer-overlay" class:paused={!isActive}>{timerDisplay}</span>
-    {/if}
     {#if projectLabel}
       <span class="project-label" title={projectLabel}>{projectLabel}</span>
     {/if}
     <div class="title-wrap compact-title-wrap">
       <button class="compact-title-btn" on:click={handleOpenConversation} title={titleTooltip}>{@html highlight(cleanTitle(displayTitle))}</button>
+      {#if showTimer}
+        <span class="compact-timer" class:paused={!isActive}>{timerDisplay}</span>
+      {/if}
       {#if openMenuVisible}
         <div class="open-menu" bind:this={openMenuEl}>
-          <button class="open-menu-item" on:click={() => handleOpenAs('terminal')}>
-            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 9l3-3-3-3-.7.7L7.6 6 5.3 8.3 6 9zm4 1H7v1h3v-1zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11z"/></svg>
-            Open in Terminal
-          </button>
+          {#if isCodex}
+            <button class="open-menu-item" on:click={() => handleOpenAs('codex-vscode')}>
+              <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10.94 1L6 5.63 2.36 3 1 3.87l3.5 3.12L1 10.12 2.36 13 6 10.37 10.94 15 15 13.13V2.87L10.94 1zm.56 10.76l-4-3.07v-.38l4-3.07v6.52z"/></svg>
+              Open in Codex (VSCode)
+            </button>
+            <button class="open-menu-item" on:click={() => handleOpenAs('codex-cursor')}>
+              <svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.7 2.3a1 1 0 010 1.4L5.4 12H3v-2.4l8.3-8.3a1 1 0 011.4 0zM4 10.4V11h.6l7.3-7.3-.6-.6L4 10.4z"/></svg>
+              Open in Codex (Cursor)
+            </button>
+          {:else}
+            <button class="open-menu-item" on:click={() => handleOpenAs('terminal')}>
+              <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 9l3-3-3-3-.7.7L7.6 6 5.3 8.3 6 9zm4 1H7v1h3v-1zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00-.5-.5v-11a.5.5 0 00-.5-.5h-11z"/></svg>
+              Resume in Terminal
+            </button>
+          {/if}
           <button class="open-menu-item" on:click={() => handleOpenAs('vscode')}>
             <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10.94 1L6 5.63 2.36 3 1 3.87l3.5 3.12L1 10.12 2.36 13 6 10.37 10.94 15 15 13.13V2.87L10.94 1zm.56 10.76l-4-3.07v-.38l4-3.07v6.52z"/></svg>
             Open in VSCode
+          </button>
+          <button class="open-menu-item" on:click={() => handleOpenAs('cursor')}>
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.7 2.3a1 1 0 010 1.4L5.4 12H3v-2.4l8.3-8.3a1 1 0 011.4 0zM4 10.4V11h.6l7.3-7.3-.6-.6L4 10.4z"/></svg>
+            Open in Cursor
           </button>
         </div>
       {/if}
@@ -390,6 +410,7 @@
     class:needs-input={needsInteraction}
     class:focused
     style="--category-color: {categoryDetails.color}"
+    role="article"
     on:contextmenu={handleContextMenu}
   >
     {#if conversation.hasError}
@@ -440,13 +461,28 @@
         </button>
         {#if openMenuVisible}
           <div class="open-menu" bind:this={openMenuEl}>
-            <button class="open-menu-item" on:click={() => handleOpenAs('terminal')}>
-              <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 9l3-3-3-3-.7.7L7.6 6 5.3 8.3 6 9zm4 1H7v1h3v-1zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11z"/></svg>
-              Open in Terminal
-            </button>
+            {#if isCodex}
+              <button class="open-menu-item" on:click={() => handleOpenAs('codex-vscode')}>
+                <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10.94 1L6 5.63 2.36 3 1 3.87l3.5 3.12L1 10.12 2.36 13 6 10.37 10.94 15 15 13.13V2.87L10.94 1zm.56 10.76l-4-3.07v-.38l4-3.07v6.52z"/></svg>
+                Open in Codex (VSCode)
+              </button>
+              <button class="open-menu-item" on:click={() => handleOpenAs('codex-cursor')}>
+                <svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.7 2.3a1 1 0 010 1.4L5.4 12H3v-2.4l8.3-8.3a1 1 0 011.4 0zM4 10.4V11h.6l7.3-7.3-.6-.6L4 10.4z"/></svg>
+                Open in Codex (Cursor)
+              </button>
+            {:else}
+              <button class="open-menu-item" on:click={() => handleOpenAs('terminal')}>
+                <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 9l3-3-3-3-.7.7L7.6 6 5.3 8.3 6 9zm4 1H7v1h3v-1zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00-.5-.5v-11a.5.5 0 00-.5-.5h-11z"/></svg>
+                Resume in Terminal
+              </button>
+            {/if}
             <button class="open-menu-item" on:click={() => handleOpenAs('vscode')}>
               <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10.94 1L6 5.63 2.36 3 1 3.87l3.5 3.12L1 10.12 2.36 13 6 10.37 10.94 15 15 13.13V2.87L10.94 1zm.56 10.76l-4-3.07v-.38l4-3.07v6.52z"/></svg>
               Open in VSCode
+            </button>
+            <button class="open-menu-item" on:click={() => handleOpenAs('cursor')}>
+              <svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.7 2.3a1 1 0 010 1.4L5.4 12H3v-2.4l8.3-8.3a1 1 0 011.4 0zM4 10.4V11h.6l7.3-7.3-.6-.6L4 10.4z"/></svg>
+              Open in Cursor
             </button>
           </div>
         {/if}
@@ -513,6 +549,12 @@
           </svg>
           <span class="branch-name">{@html highlight(conversation.gitBranch || '')}</span>
         </button>
+      {/if}
+      {#if conversation.worktreeName}
+        <span class="worktree-badge" title={`Claude worktree: ${conversation.worktreeName}`}>
+          <span class="worktree-label">wt</span>
+          <span class="worktree-name">{@html highlight(conversation.worktreeName)}</span>
+        </span>
       {/if}
       {#if conversation.sidechainSteps?.length}
         <div class="sidechain-dots" title="Subagent activity">
@@ -694,7 +736,7 @@
   }
   .category-icon { font-size: 12px; filter: grayscale(0.2); }
   .title-wrap { position: relative; flex: 1; min-width: 0; }
-  .compact-title-wrap { display: flex; }
+  .compact-title-wrap { display: flex; align-items: center; }
   .title-btn {
     font-size: 11px; font-weight: 600; color: var(--vscode-foreground, #cccccc); line-height: 1.3;
     flex: 1; word-break: break-word; text-align: left;
@@ -787,6 +829,23 @@
   .git-branch:hover { text-decoration: underline; }
   .git-icon { width: 12px; height: 12px; opacity: 0.8; }
   .branch-name { font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace; font-size: 9px; }
+  .worktree-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--vscode-badge-background, #4d4d4d) 72%, transparent);
+    color: var(--vscode-badge-foreground, #ffffff);
+    font-size: 9px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .worktree-label {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    opacity: 0.75;
+  }
+  .worktree-name { font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace; }
   .agents-row { display: flex; margin-left: auto; }
 
   /* Hide prompt input by default; reveal on hover or when user is typing */
@@ -851,6 +910,12 @@
     background: none; border: none; cursor: pointer; padding: 0; font-family: inherit;
   }
   .compact-title-btn:hover { color: var(--vscode-textLink-foreground, #3794ff); }
+  .compact-timer {
+    flex-shrink: 0; font-size: 9px; white-space: nowrap;
+    font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+    color: #22c55e; opacity: 0.85; margin-left: 4px; align-self: center;
+  }
+  .compact-timer.paused { color: var(--vscode-disabledForeground, #6b6b6b); opacity: 0.5; }
   .compact-agents { display: flex; flex-shrink: 0; }
 
   .error-badge-inline {

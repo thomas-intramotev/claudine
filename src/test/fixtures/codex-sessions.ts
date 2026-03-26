@@ -277,6 +277,16 @@ export const sessionWithIDEContextMultiLine = [
   taskComplete(24),
 ].join('\n');
 
+/**
+ * BUG23: Session with only user messages and no agent response yet.
+ * Should be detected as 'in-progress' (not 'todo') because Codex sessions
+ * are already running by the time we detect the file.
+ */
+export const userOnlySession = [
+  sessionMeta('sess-user-only', '/Users/dev/my-project', 5),
+  userMsg('Refactor the database layer', 3),
+].join('\n');
+
 /** Completely empty content. */
 export const emptyContent = '';
 

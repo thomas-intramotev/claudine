@@ -255,6 +255,39 @@ describe('KanbanViewProvider — regression tests', () => {
     });
   });
 
+  // BUG22 — 👀 focus indicator not updating when switching Claude Code tabs
+  describe('BUG22 — focus detection event listeners', () => {
+    it('registers onDidChangeTabGroups listener for tab activation detection', () => {
+      const onDidChangeTabGroupsFn = vi.fn().mockReturnValue({ dispose: () => {} });
+      Object.defineProperty(vscode.window, 'tabGroups', {
+        value: {
+          onDidChangeTabs: vi.fn().mockReturnValue({ dispose: () => {} }),
+          onDidChangeTabGroups: onDidChangeTabGroupsFn,
+        },
+        configurable: true,
+        writable: true,
+      });
+
+      const view = createMockWebviewView('claudine.kanbanView');
+      provider.resolveWebviewView(view as never, {} as never, {} as never);
+
+      expect(onDidChangeTabGroupsFn).toHaveBeenCalled();
+    });
+
+    it('calls detectFocusedConversation when sidebar becomes visible', () => {
+      const view = createMockWebviewView('claudine.kanbanView');
+      provider.resolveWebviewView(view as never, {} as never, {} as never);
+
+      const tabManager = tabManagerInstances.at(-1)!;
+      (tabManager.detectFocusedConversation as ReturnType<typeof vi.fn>).mockClear();
+
+      // Simulate sidebar becoming visible
+      view.setVisible(true);
+
+      expect(tabManager.detectFocusedConversation).toHaveBeenCalled();
+    });
+  });
+
   // BUG4d — stale webview listeners must not react after the same view is resolved again.
   describe('BUG4d — stale webview disposal', () => {
     it('ignores messages from the previously resolved view instance', () => {

@@ -108,9 +108,9 @@ export class StandaloneMessageHandler {
         const current = this._platform.getConfig<boolean>('enableSummarization', false);
         this._platform.setConfig('enableSummarization', !current).then(() => {
           this.sendSettings();
-          if (!current) {
-            this.progressiveRefresh();
-          }
+          // BUG8b: Always refresh — turning ON kicks off summarization,
+          // turning OFF re-sends conversations with originalTitle for revert.
+          this.progressiveRefresh();
         });
         break;
       }
@@ -323,7 +323,7 @@ export class StandaloneMessageHandler {
     this._send({ type: 'draftsLoaded', drafts });
   }
 
-  private openConversationAs(conversationId: string, target: 'terminal' | 'vscode') {
+  private openConversationAs(conversationId: string, target: string) {
     const conversation = this._stateManager.getConversation(conversationId);
     if (!conversation) {
       console.warn(`Claudine: Conversation ${conversationId} not found`);
@@ -334,40 +334,65 @@ export class StandaloneMessageHandler {
     const cwd = conversation.workspacePath || process.env.HOME || '/';
     const sessionId = conversation.id;
 
-    if (target === 'terminal') {
-      const platform = process.platform;
+    switch (target) {
+      case 'terminal':
+        this.openInTerminal(cwd, sessionId);
+        break;
+      case 'vscode':
+        this.openInEditor('code', cwd);
+        break;
+      case 'cursor':
+        this.openInEditor('cursor', cwd);
+        break;
+      case 'codex-vscode':
+        // Open workspace in VSCode — the Codex extension will be available there
+        this.openInEditor('code', cwd);
+        break;
+      case 'codex-cursor':
+        // Open workspace in Cursor — the Codex extension will be available there
+        this.openInEditor('cursor', cwd);
+        break;
+      default:
+        console.warn(`Claudine: Unknown open target "${target}"`);
+        break;
+    }
+  }
 
-      if (platform === 'darwin') {
-        // macOS: open Terminal.app via osascript and resume the Claude Code conversation
-        const script = `tell application "Terminal" to do script "cd '${cwd}' && claude --resume '${sessionId}'"`;
-        execFile('osascript', ['-e', script], (err) => {
-          if (err) {
-            console.error('Claudine: Failed to open terminal', err);
-            this._send({ type: 'error', message: `Failed to open terminal: ${err.message}` });
-          }
-        });
-      } else if (platform === 'linux') {
-        const shellCmd = `cd '${cwd}' && claude --resume '${sessionId}'; exec bash`;
-        const terminals: Array<{ cmd: string; args: string[] }> = [
-          { cmd: 'gnome-terminal', args: ['--', 'bash', '-c', shellCmd] },
-          { cmd: 'konsole', args: ['-e', 'bash', '-c', shellCmd] },
-          { cmd: 'xterm', args: ['-e', 'bash', '-c', shellCmd] },
-        ];
-        this.tryExecFiles(terminals);
-      } else if (platform === 'win32') {
-        execFile('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${cwd}" && claude --resume "${sessionId}"`], (err) => {
-          if (err) {
-            console.error('Claudine: Failed to open terminal', err);
-            this._send({ type: 'error', message: `Failed to open terminal: ${err.message}` });
-          }
-        });
+  /** Open a workspace folder in an editor (VSCode, Cursor, etc.). */
+  private openInEditor(cmd: string, cwd: string) {
+    execFile(cmd, [cwd], (err) => {
+      if (err) {
+        console.error(`Claudine: Failed to open ${cmd}`, err);
+        this._send({ type: 'error', message: `Failed to open ${cmd}: ${err.message}` });
       }
-    } else {
-      // Open the workspace folder in VSCode
-      execFile('code', [cwd], (err) => {
+    });
+  }
+
+  /** Resume a Claude Code conversation in a terminal emulator. */
+  private openInTerminal(cwd: string, sessionId: string) {
+    const platform = process.platform;
+
+    if (platform === 'darwin') {
+      const script = `tell application "Terminal" to do script "cd '${cwd}' && claude --resume '${sessionId}'"`;
+      execFile('osascript', ['-e', script], (err) => {
         if (err) {
-          console.error('Claudine: Failed to open VSCode', err);
-          this._send({ type: 'error', message: `Failed to open VSCode: ${err.message}` });
+          console.error('Claudine: Failed to open terminal', err);
+          this._send({ type: 'error', message: `Failed to open terminal: ${err.message}` });
+        }
+      });
+    } else if (platform === 'linux') {
+      const shellCmd = `cd '${cwd}' && claude --resume '${sessionId}'; exec bash`;
+      const terminals: Array<{ cmd: string; args: string[] }> = [
+        { cmd: 'gnome-terminal', args: ['--', 'bash', '-c', shellCmd] },
+        { cmd: 'konsole', args: ['-e', 'bash', '-c', shellCmd] },
+        { cmd: 'xterm', args: ['-e', 'bash', '-c', shellCmd] },
+      ];
+      this.tryExecFiles(terminals);
+    } else if (platform === 'win32') {
+      execFile('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${cwd}" && claude --resume "${sessionId}"`], (err) => {
+        if (err) {
+          console.error('Claudine: Failed to open terminal', err);
+          this._send({ type: 'error', message: `Failed to open terminal: ${err.message}` });
         }
       });
     }
