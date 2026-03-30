@@ -979,7 +979,9 @@ export class ConversationParser {
       // Output e.g. "Drives: C:\ D:\ E:\ G:\"
       const drives = stdout.match(/[A-Za-z]:\\/g);
       if (drives && drives.length > 0) return drives;
-    } catch { }
+    } catch {
+      console.warn('Failed to get Windows drives, defaulting to C:\\');
+    }
     return ['C:\\'];
   }
 
