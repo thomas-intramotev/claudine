@@ -62,6 +62,8 @@ const projectAEncoded = '-Users-alice-projectA';
 const projectBEncoded = '-Users-alice-projectB';
 const projectAWorktreesDir = path.join(projectAPath, '.claude', 'worktrees');
 const projectAWorktreeEncoded = '-Users-alice-projectA--claude-worktrees-feature-login';
+const defaultIgnoreCase = process.platform === 'win32' || process.platform === 'darwin';
+const withDefaultCase = (encodedPath: string) => defaultIgnoreCase ? encodedPath.toLowerCase() : encodedPath;
 
 describe('MonitoredWorkspace — getProjectDirsToScan', () => {
   beforeEach(() => {
@@ -90,6 +92,23 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     }) as unknown as typeof fs.readdirSync);
   });
 
+  it('applies lowercase normalization on case-insensitive platforms', () => {
+    const platform = createMockPlatform({
+      workspaceFolders: ['/Users/alice/projectA'],
+      monitoredWorkspace: { mode: 'auto' },
+      monitorWorktrees: false,
+    });
+    const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
+
+    let dirs = (watcher as any).getProjectDirsToScan(projectsDir, true);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]).toContain('-users-alice-projecta');
+
+    dirs = (watcher as any).getProjectDirsToScan(projectsDir, false);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]).toContain('-Users-alice-projectA');
+  });
+
   it('auto mode with workspace folders scans the workspace and its Claude worktrees', () => {
     const platform = createMockPlatform({
       workspaceFolders: [projectAPath],
@@ -98,8 +117,8 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
     expect(dirs).toHaveLength(2);
-    expect(dirs).toContain(path.join(projectsDir, projectAEncoded));
-    expect(dirs).toContain(path.join(projectsDir, projectAWorktreeEncoded));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectAEncoded)));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectAWorktreeEncoded)));
   });
 
   it('auto mode without workspace folders scans all (excluding temp)', () => {
@@ -119,7 +138,7 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
       monitoredWorkspace: { mode: 'single', path: projectBPath },
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
-    const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
+    const dirs = (watcher as any).getProjectDirsToScan(projectsDir, false);
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).toContain(projectBEncoded);
   });
@@ -132,9 +151,9 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
     expect(dirs).toHaveLength(3);
-    expect(dirs).toContain(path.join(projectsDir, projectAEncoded));
-    expect(dirs).toContain(path.join(projectsDir, projectBEncoded));
-    expect(dirs).toContain(path.join(projectsDir, projectAWorktreeEncoded));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectAEncoded)));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectBEncoded)));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectAWorktreeEncoded)));
   });
 
   it('single mode with invalid path returns empty', () => {
@@ -159,8 +178,8 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
-    expect(dirs).toContain(path.join(projectsDir, projectAEncoded));
-    expect(dirs).toContain(path.join(projectsDir, projectAWorktreeEncoded));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectAEncoded)));
+    expect(dirs).toContain(path.join(projectsDir, withDefaultCase(projectAWorktreeEncoded)));
   });
 
   it('can disable Claude worktree discovery via monitorWorktrees', () => {
@@ -171,7 +190,7 @@ describe('MonitoredWorkspace — getProjectDirsToScan', () => {
     });
     const watcher = new ClaudeCodeWatcher(createMockStateManager(), platform as any);
     const dirs = (watcher as any).getProjectDirsToScan(projectsDir);
-    expect(dirs).toEqual([path.join(projectsDir, projectAEncoded)]);
+    expect(dirs).toEqual([path.join(projectsDir, withDefaultCase(projectAEncoded))]);
   });
 });
 

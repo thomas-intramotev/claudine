@@ -282,15 +282,20 @@ describe('ClaudeCodeWatcher — regression tests', () => {
       platform.getWorkspaceFolders = () => [dottedWorkspace];
       const sm = createMockStateManager();
       const w = new ClaudeCodeWatcher(sm as never, platform);
+      const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
 
       mockExistsSync.mockImplementation(((p: string) => {
-        if (typeof p === 'string' && p.includes(encodedDir)) return true;
+        if (typeof p === 'string' &&
+          p.includes(ignoreCase ? encodedDir.toLowerCase() : encodedDir)
+        ) return true;
         if (p === path.join(claudePath, 'projects')) return true;
         return false;
       }) as typeof fs.existsSync);
 
       mockReaddirSync.mockImplementation(((dirPath: string) => {
-        if (typeof dirPath === 'string' && dirPath.includes(encodedDir)) {
+        if (typeof dirPath === 'string' &&
+          dirPath.includes(ignoreCase ? encodedDir.toLowerCase() : encodedDir)
+        ) {
           return [{ name: 'conv-1.jsonl', isDirectory: () => false, isFile: () => true }];
         }
         return [];
@@ -323,15 +328,20 @@ describe('ClaudeCodeWatcher — regression tests', () => {
       platform.getWorkspaceFolders = () => [windowsWorkspace];
       const sm = createMockStateManager();
       const w = new ClaudeCodeWatcher(sm as never, platform);
+      const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
 
       mockExistsSync.mockImplementation(((p: string) => {
-        if (typeof p === 'string' && p.includes(encodedDir)) return true;
+        if (typeof p === 'string' &&
+          p.includes(ignoreCase ? encodedDir.toLowerCase() : encodedDir)
+        ) return true;
         if (p === path.join(claudePath, 'projects')) return true;
         return false;
       }) as typeof fs.existsSync);
 
       mockReaddirSync.mockImplementation(((dirPath: string) => {
-        if (typeof dirPath === 'string' && dirPath.includes(encodedDir)) {
+        if (typeof dirPath === 'string' &&
+          dirPath.includes(ignoreCase ? encodedDir.toLowerCase() : encodedDir)
+        ) {
           return [{ name: 'conv-win.jsonl', isDirectory: () => false, isFile: () => true }];
         }
         return [];
@@ -363,15 +373,20 @@ describe('ClaudeCodeWatcher — regression tests', () => {
       platform.getWorkspaceFolders = () => [mixedWorkspace];
       const sm = createMockStateManager();
       const w = new ClaudeCodeWatcher(sm as never, platform);
+      const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
 
       mockExistsSync.mockImplementation(((p: string) => {
-        if (typeof p === 'string' && p.includes(encodedDir)) return true;
+        if (typeof p === 'string' &&
+          p.includes(ignoreCase ? encodedDir.toLowerCase() : encodedDir)
+        ) return true;
         if (p === path.join(claudePath, 'projects')) return true;
         return false;
       }) as typeof fs.existsSync);
 
       mockReaddirSync.mockImplementation(((dirPath: string) => {
-        if (typeof dirPath === 'string' && dirPath.includes(encodedDir)) {
+        if (typeof dirPath === 'string' &&
+          dirPath.includes(ignoreCase ? encodedDir.toLowerCase() : encodedDir)
+        ) {
           return [{ name: 'conv-mix.jsonl', isDirectory: () => false, isFile: () => true }];
         }
         return [];
@@ -437,7 +452,10 @@ describe('ClaudeCodeWatcher — regression tests', () => {
       const workspace = '/Users/alice/projectA';
       const worktreesDir = path.join(workspace, '.claude', 'worktrees');
       const worktreePath = path.join(worktreesDir, 'feature-login');
-      const encodedDir = '-Users-alice-projectA--claude-worktrees-feature-login';
+      const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
+      const encodedDir = ignoreCase
+        ? '-users-alice-projecta--claude-worktrees-feature-login'
+        : '-Users-alice-projectA--claude-worktrees-feature-login';
 
       const platform = createMockPlatform();
       platform.getWorkspaceFolders = () => [workspace];

@@ -141,4 +141,5 @@ export interface IPlatformAdapter {
 
   /** Path to the extension source directory (for bundled resources). */
   getExtensionPath(): string | undefined;
+
 }

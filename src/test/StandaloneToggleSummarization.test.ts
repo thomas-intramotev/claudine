@@ -101,6 +101,7 @@ describe('BUG8 – toggleSummarization in standalone mode', () => {
         monitorWorktrees: true,
         monitoredWorkspace: { mode: 'auto' },
         detectedWorkspacePaths: [],
+        customTerminals: [],
       };
       sent.push({ type: 'updateSettings', settings });
     }

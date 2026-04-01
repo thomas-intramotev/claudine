@@ -12,10 +12,10 @@ import { MAX_IMAGE_FILE_SIZE_BYTES } from '../constants';
 
 /** Patterns that identify OS temp/system directories to auto-exclude in standalone mode. */
 const EXCLUDED_PATH_PATTERNS = [
-  /\/var\/folders\//,       // macOS temp (also /private/var/folders/)
+  /\/var\/folders\//i,       // macOS temp (also /private/var/folders/)
   /\/tmp\//,                // Unix /tmp
   /\\Temp\\/i,              // Windows %TEMP%
-  /\/\.Trash\//,            // macOS Trash
+  /\/\.Trash\//i,            // macOS Trash
   /\\Recycle\.Bin\\/i,      // Windows Recycle Bin
 ];
 
@@ -211,8 +211,10 @@ export class ClaudeCodeWatcher implements IConversationProvider {
 
   private isFromExcludedWorkspace(filePath: string): boolean {
     if (!this._excludedWorkspacePath) return false;
-    const encodedExcluded = this.encodeWorkspacePath(this._excludedWorkspacePath);
-    return filePath.includes(`${path.sep}${encodedExcluded}${path.sep}`);
+    const lowercase = process.platform === 'win32' || process.platform === 'darwin';
+    const encodedExcluded = this.encodeWorkspacePath(this._excludedWorkspacePath, lowercase);
+    const normalizedFilePath = this.normalizePath(filePath, lowercase);
+    return normalizedFilePath.includes(`/${encodedExcluded}/`);
   }
 
   /** BUG2: Check whether a JSONL file belongs to one of the effective workspace's
@@ -223,9 +225,10 @@ export class ClaudeCodeWatcher implements IConversationProvider {
 
     for (const folder of effectiveRoots) {
       if (this._excludedWorkspacePath && folder === this._excludedWorkspacePath) continue;
-      const encodedPath = this.encodeWorkspacePath(folder);
-      const normalizedFilePath = filePath.replace(/[\\/]/g, path.sep);
-      if (normalizedFilePath.includes(`${path.sep}${encodedPath}${path.sep}`)) return true;
+      const lowercase = process.platform === 'win32' || process.platform === 'darwin';
+      const encodedPath = this.encodeWorkspacePath(folder, lowercase);
+      const normalizedFilePath = this.normalizePath(filePath, lowercase);
+      if (normalizedFilePath.includes(`/${encodedPath}/`)) return true;
     }
     return false;
   }
@@ -346,9 +349,9 @@ export class ClaudeCodeWatcher implements IConversationProvider {
     }
   }
 
-  private getProjectDirsToScan(projectsPath: string): string[] {
+  private getProjectDirsToScan(projectsPath: string, ignoreCase?: boolean): string[] {
     const dirs: string[] = [];
-
+    ignoreCase = ignoreCase ?? (process.platform === 'win32' || process.platform === 'darwin');
     try {
       if (!fs.existsSync(projectsPath)) {
         console.warn(`Claudine: Projects path does not exist: ${projectsPath}`);
@@ -366,7 +369,7 @@ export class ClaudeCodeWatcher implements IConversationProvider {
             continue;
           }
 
-          const encodedPath = this.encodeWorkspacePath(folder);
+          const encodedPath = this.encodeWorkspacePath(folder, ignoreCase);
           const projectDir = path.join(projectsPath, encodedPath);
 
           console.log(`Claudine: Workspace "${folder}" → encoded "${encodedPath}"`);
@@ -400,23 +403,38 @@ export class ClaudeCodeWatcher implements IConversationProvider {
   }
 
   /**
-   * Encode a workspace path the same way Claude Code does.
-   * /Users/matthias/Development/foo → -Users-matthias-Development-foo
-   * /Users/matthias/Development/molts.club → -Users-matthias-Development-molts-club
-   * C:\Users\foo\project → C-Users-foo-project (BUG20: Windows backslash + colon)
+   * Normalize fs path to use forward-slash as separator, and optionally be
+   * lowercase e.g. for macOS or Windows
    */
-  private encodeWorkspacePath(workspacePath: string): string {
-    return workspacePath.replace(/[/\\.:]/g, '-');
+  private normalizePath(p: string, lowercase: boolean = false): string {
+    let npath = path.normalize(p);
+    npath = npath.replace(/\\/g, '/');
+
+    if (lowercase) npath = npath.toLowerCase();
+
+    return npath;
+  }
+
+  /**
+   * Encode a workspace path the same way Claude Code does; optionally lowercase
+   * /Users/matthias/Development/foo → -users-matthias-development-foo
+   * /Users/matthias/Development/molts.club → -Users-matthias-Development-molts-club
+   * C:\Users\foo\project → c--users-foo-project (BUG20: Windows backslash + colon)
+   */
+  private encodeWorkspacePath(workspacePath: string, lowercase: boolean = false): string {
+    const normalizedWorkspacePath = this.normalizePath(workspacePath, lowercase);
+    return normalizedWorkspacePath.replace(/[/.:_]/g, '-');
   }
 
   private resolveWorkspacePathForFile(filePath: string): string | undefined {
     const effectiveRoots = this.getEffectiveWorkspaceRoots();
     if (!effectiveRoots || effectiveRoots.length === 0) return undefined;
 
-    const normalizedFilePath = filePath.replace(/[\\/]/g, path.sep);
+    const lowercase = process.platform === 'win32' || process.platform === 'darwin';
+    const normalizedFilePath = this.normalizePath(filePath, lowercase);
     for (const root of effectiveRoots) {
-      const encodedPath = this.encodeWorkspacePath(root);
-      if (normalizedFilePath.includes(`${path.sep}${encodedPath}${path.sep}`)) {
+      const encodedPath = this.encodeWorkspacePath(root, lowercase);
+      if (normalizedFilePath.includes(`/${encodedPath}/`)) {
         return root;
       }
     }

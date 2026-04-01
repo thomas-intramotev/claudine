@@ -234,4 +234,5 @@ export class StandaloneAdapter implements IPlatformAdapter {
   getExtensionPath(): string | undefined {
     return path.resolve(__dirname, '..');
   }
+
 }

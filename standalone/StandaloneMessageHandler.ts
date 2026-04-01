@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { homedir } from 'os';
 import { IPlatformAdapter } from '../src/platform/IPlatformAdapter';
 import { StateManager } from '../src/services/StateManager';
 import { IConversationProvider } from '../src/providers/IConversationProvider';
@@ -6,6 +7,7 @@ import {
   ExtensionToWebviewMessage,
   WebviewToExtensionMessage,
   ClaudineSettings,
+  CustomTerminalConfig,
   ProjectManifestEntry,
 } from '../src/types';
 
@@ -314,6 +316,9 @@ export class StandaloneMessageHandler {
       showTaskDescription: this._platform.getConfig('showTaskDescription', true),
       showTaskLatest: this._platform.getConfig('showTaskLatest', true),
       showTaskGitBranch: this._platform.getConfig('showTaskGitBranch', true),
+      customTerminals: this._platform.getConfig<CustomTerminalConfig[]>('customTerminals', []),
+      monitoredWorkspace: this._platform.getConfig('monitoredWorkspace', { mode: 'auto' }),
+      detectedWorkspacePaths: [],
     };
     this._send({ type: 'updateSettings', settings });
   }
@@ -331,7 +336,7 @@ export class StandaloneMessageHandler {
       return;
     }
 
-    const cwd = conversation.workspacePath || process.env.HOME || '/';
+    const cwd = conversation.workspacePath || homedir();
     const sessionId = conversation.id;
 
     switch (target) {
@@ -360,7 +365,7 @@ export class StandaloneMessageHandler {
 
   /** Open a workspace folder in an editor (VSCode, Cursor, etc.). */
   private openInEditor(cmd: string, cwd: string) {
-    execFile(cmd, [cwd], (err) => {
+    execFile(cmd, [cwd], { shell: process.platform === 'win32' }, (err) => {
       if (err) {
         console.error(`Claudine: Failed to open ${cmd}`, err);
         this._send({ type: 'error', message: `Failed to open ${cmd}: ${err.message}` });
@@ -371,43 +376,66 @@ export class StandaloneMessageHandler {
   /** Resume a Claude Code conversation in a terminal emulator. */
   private openInTerminal(cwd: string, sessionId: string) {
     const platform = process.platform;
+    // Strip Node.js debugger variables that interfere with child processes (mainly relevant to
+    // VS Code debug sessions). NODE_OPTIONS may carry debugger bootstrap flags (--require) that
+    // claude's embedded Node can't resolve.
+    const env = { ...process.env };
+    delete env['NODE_OPTIONS'];
 
+    const resumeCmd = `claude --resume ${sessionId}`;
+
+    // Custom terminals from settings are tried first, before platform defaults.
+    // cwd is passed via execFile options so users don't need to encode it themselves.
+    const customTerminals = this._platform.getConfig<CustomTerminalConfig[]>('customTerminals', []);
+    const customEntries = customTerminals.map(t => ({ cmd: t.command, args: [...t.args, resumeCmd] }));
+
+    let builtins: Array<{ cmd: string; args: string[] }>;
     if (platform === 'darwin') {
-      const script = `tell application "Terminal" to do script "cd '${cwd}' && claude --resume '${sessionId}'"`;
-      execFile('osascript', ['-e', script], (err) => {
-        if (err) {
-          console.error('Claudine: Failed to open terminal', err);
-          this._send({ type: 'error', message: `Failed to open terminal: ${err.message}` });
-        }
-      });
+      // Terminal.app does not inherit cwd from the osascript process, so it must be
+      // embedded in the AppleScript string directly.
+      const script = `tell application "Terminal" to do script "cd '${cwd}' && ${resumeCmd}"`;
+      builtins = [{ cmd: 'osascript', args: ['-e', script] }];
     } else if (platform === 'linux') {
-      const shellCmd = `cd '${cwd}' && claude --resume '${sessionId}'; exec bash`;
-      const terminals: Array<{ cmd: string; args: string[] }> = [
+      // cwd is inherited by the shell via execFile's cwd option, so no cd prefix needed.
+      // `; exec bash` keeps the window open after claude exits.
+      const shellCmd = `${resumeCmd}; exec bash`;
+      builtins = [
         { cmd: 'gnome-terminal', args: ['--', 'bash', '-c', shellCmd] },
         { cmd: 'konsole', args: ['-e', 'bash', '-c', shellCmd] },
         { cmd: 'xterm', args: ['-e', 'bash', '-c', shellCmd] },
       ];
-      this.tryExecFiles(terminals);
-    } else if (platform === 'win32') {
-      execFile('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${cwd}" && claude --resume "${sessionId}"`], (err) => {
-        if (err) {
-          console.error('Claudine: Failed to open terminal', err);
-          this._send({ type: 'error', message: `Failed to open terminal: ${err.message}` });
-        }
-      });
+    } else {
+      // wt doesn't inherit cwd from its parent; -d sets the starting directory explicitly.
+      // For cmd, `start` opens a new independent window but inherits the outer cmd's cwd
+      // (set via execFile), so /D is not needed.
+      builtins = [
+        { cmd: 'wt', args: ['-d', cwd, 'cmd', '/k', resumeCmd] },
+        { cmd: 'cmd', args: ['/c', 'start', '', 'cmd', '/k', resumeCmd] },
+      ];
     }
+
+    this.tryExecFiles([...customEntries, ...builtins], env, cwd)
+      .then(started => {
+        if (!started) this._send({ type: 'error', message: 'No supported terminal emulator found' });
+      });
   }
 
-  /** Try a list of terminal emulators in order, stopping at the first success. */
-  private tryExecFiles(commands: Array<{ cmd: string; args: string[] }>, index = 0) {
-    if (index >= commands.length) {
-      this._send({ type: 'error', message: 'No supported terminal emulator found' });
-      return;
+  /** Try a list of terminal emulators in order, stopping at the first success.
+   *  `cwd` is passed as the working directory option for each execFile call.
+   *  Returns true if a command launched without error, false if all failed. */
+  private async tryExecFiles(
+    commands: Array<{ cmd: string; args: string[] }>,
+    env: NodeJS.ProcessEnv,
+    cwd: string
+  ): Promise<boolean> {
+    for (const { cmd, args } of commands) {
+      const err = await new Promise<Error | null>(resolve => {
+        execFile(cmd, args, { env, cwd }, err => resolve(err));
+      });
+      if (!err) return true;
+      console.warn(`Claudine: Failed to launch "${cmd}": ${err.message}`);
     }
-    const { cmd, args } = commands[index];
-    execFile(cmd, args, (err) => {
-      if (err) this.tryExecFiles(commands, index + 1);
-    });
+    return false;
   }
 
   private async testApiConnection() {

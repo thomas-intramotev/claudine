@@ -147,6 +147,11 @@ export type MonitoredWorkspace =
   | { mode: 'single'; path: string }
   | { mode: 'multi'; paths: string[] };
 
+export interface CustomTerminalConfig {
+  command: string;
+  args: string[];
+}
+
 export interface ClaudineSettings {
   imageGenerationApi: 'openai' | 'stability' | 'none';
   claudeCodePath: string;
@@ -162,6 +167,7 @@ export interface ClaudineSettings {
   monitorWorktrees: boolean;
   monitoredWorkspace: MonitoredWorkspace;
   detectedWorkspacePaths: string[];
+  customTerminals: CustomTerminalConfig[];
 }
 
 // Claude Code data structures (based on actual file format)

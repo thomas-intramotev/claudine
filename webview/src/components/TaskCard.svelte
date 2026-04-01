@@ -164,7 +164,8 @@
     toggleCardCollapsed(conversation.id);
   }
 
-  function handleOpenConversation() {
+  function handleOpenConversation(e?: MouseEvent) {
+    e?.stopPropagation();
     if (vscode.isStandalone) {
       openMenuVisible = !openMenuVisible;
     } else {
