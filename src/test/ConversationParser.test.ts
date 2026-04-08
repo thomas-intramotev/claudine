@@ -580,7 +580,7 @@ describe('ConversationParser', () => {
       expect(result!.worktreeName).toBeUndefined();
     });
 
-    it('handles null worktreeSession without crashing', async () => {
+    it('returns undefined worktree after null worktreeSession', async () => {
       const content = [
         fixtures.userMessage('Do some work', 10),
         JSON.stringify({
@@ -599,22 +599,34 @@ describe('ConversationParser', () => {
       expect(result!.worktreeName).toBeUndefined();
     });
 
-    it('extracts worktree name from a worktree workspace path (Unix)', () => {
-      const extractWorktree = (p: string) =>
-        (parser as any).extractWorktreeFromWorkspacePath(p);
-      expect(extractWorktree('/Users/alice/project/.claude/worktrees/feat-foo')).toBe('feat-foo');
-    });
-
-    it('extracts worktree name from a worktree workspace path (Windows)', () => {
-      const extractWorktree = (p: string) =>
-        (parser as any).extractWorktreeFromWorkspacePath(p);
-      expect(extractWorktree('C:\\Users\\alice\\project\\.claude\\worktrees\\feat-foo')).toBe('feat-foo');
-    });
-
-    it('returns undefined for non-worktree workspace path', () => {
-      const extractWorktree = (p: string) =>
-        (parser as any).extractWorktreeFromWorkspacePath(p);
-      expect(extractWorktree('/Users/alice/project')).toBeUndefined();
+    it('parses worktree based on latest worktree-state entry', async () => {
+      const content = [
+        fixtures.userMessage('Do some work', 10),
+        JSON.stringify({
+          type: 'worktree-state',
+          uuid: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          sessionId: 'test-session',
+          parentUuid: null,
+          isSidechain: false,
+          worktreeSession: { worktreeName: 'first-branch' },
+        }),
+        fixtures.assistantMessage('Done', 9),
+        fixtures.userMessage('Do some more work', 8),
+        JSON.stringify({
+          type: 'worktree-state',
+          uuid: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          sessionId: 'test-session',
+          parentUuid: null,
+          isSidechain: false,
+          worktreeSession: null
+        }),
+        fixtures.assistantMessage('Done', 7)
+      ].join('\n');
+      const result = await parseContent(content);
+      expect(result).not.toBeNull();
+      expect(result!.worktreeName).toBeUndefined();
     });
   });
 
