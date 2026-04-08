@@ -1018,13 +1018,12 @@ export class ConversationParser {
     // macOS and Windows use case-insensitive filesystems; Claude Code may lowercase parts of
     // the encoded project directory name on these platforms.
     const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
-    const encoded = ignoreCase
-      ? parts[projectsIndex + 1].toLowerCase()
-      : parts[projectsIndex + 1];
+    let projectFolder = parts[projectsIndex + 1].replace(/--claude-worktrees-.*$/, '');
+    projectFolder = ignoreCase ? projectFolder.toLowerCase() : projectFolder;
+    
     const roots = await this.getFilesystemRoots();
-
     for (const root of roots) {
-      const result = await this.resolveEncodedPath(encoded, root, ignoreCase);
+      const result = await this.resolveEncodedPath(projectFolder, root, ignoreCase);
       if (result !== undefined) return result;
     }
     return undefined;
