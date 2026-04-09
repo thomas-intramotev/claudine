@@ -365,7 +365,7 @@ export class StandaloneMessageHandler {
 
   /** Open a workspace folder in an editor (VSCode, Cursor, etc.). */
   private openInEditor(cmd: string, cwd: string) {
-    execFile(cmd, [cwd], { shell: process.platform === 'win32' }, (err) => {
+    execFile(cmd, [cwd], (err) => {
       if (err) {
         console.error(`Claudine: Failed to open ${cmd}`, err);
         this._send({ type: 'error', message: `Failed to open ${cmd}: ${err.message}` });
